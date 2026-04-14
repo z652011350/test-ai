@@ -289,24 +289,6 @@ class InsightIntentContext {
 
 **关键文件位置**：`frameworks/js/napi/insight_intent_context/` 等 Context 类模块
 
----
-
-发现新模式时，按以下格式追加：
-
-```markdown
-### 模式N：{模式名称}
-
-**描述**：{简要描述映射机制}
-
-**正则表达式**：{可用于 grep/搜索的正则}
-
-**代码结构**：
-```cpp
-{示例代码}
-```
-
-**关键文件位置**：{通常出现的目录路径模式}
-```
 
 ### 模式14：JSI NativeModule Bridge（ArkUI 组件属性绑定）
 
@@ -364,3 +346,23 @@ class Font {
 **正则表达式**：`ANI_Constructor\s*\(|Namespace_BindNativeFunctions\s*\(`
 
 **关键文件位置**：`window_window_manager/interfaces/kits/ani/`
+
+
+---
+
+发现新模式时，按以下格式追加：
+
+```markdown
+### 模式N：{模式名称}
+
+**描述**：{简要描述映射机制}
+
+**正则表达式**：{可用于 grep/搜索的正则}
+
+**代码结构**：
+```cpp
+{示例代码}
+```
+
+**关键文件位置**：{通常出现的目录路径模式}
+```

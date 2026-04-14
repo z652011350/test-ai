@@ -117,7 +117,7 @@ Step 4 — 归纳代码路径：
 Step 5 - 校验输出文件的格式准确:
 确保{{output_dir}}/subagent_res/impl_api_subagent_{{i}}.jsonl文件的格式正确，每行都是一个包含以下字段的 JSON 对象：
 
-  {"api_declaration": "function xxx(params): returnType","module_name": "{{module_name}}","impl_api_name": "CppFuncName","impl_repo_path": "repo_name","declaration_file": "api/@ohos.xxx.d.ts","NAPI_map_file": "repo_name/path/to/napi_file.cpp","Framework_decl_file": "repo_name/path/to/framework.h","impl_file_path": "repo_name/path/to/impl.cpp"
+  {"api_declaration": "function xxx(params): returnType","module_name": "{{module_name}}","js_doc": "/** ... */","impl_api_name": "CppFuncName","impl_repo_path": "repo_name","declaration_file": "api/@ohos.xxx.d.ts","NAPI_map_file": "repo_name/path/to/napi_file.cpp","Framework_decl_file": "repo_name/path/to/framework.h","impl_file_path": "repo_name/path/to/impl.cpp"
   }
 
 Step 6 - 记录探索过程中的关键发现:
@@ -141,6 +141,7 @@ Step 6 - 记录探索过程中的关键发现:
 {
   "api_declaration": "function xxx(params): returnType",
   "module_name": "@ohos.xxx",
+  "js_doc": "/** ... */",
   "impl_api_name": "CppFuncName",
   "impl_repo_path": "repo_name",
   "declaration_file": "api/@ohos.xxx.d.ts",
@@ -156,6 +157,7 @@ Step 6 - 记录探索过程中的关键发现:
 |------|------|
 | `api_declaration` | API 函数签名 |
 | `module_name` | 模块路径（如 `@ohos.xxx`） |
+| `js_doc` | API 的 JS Doc 注释 |
 | `impl_api_name` | NAPI 层 C++ 函数名 |
 | `impl_repo_path` | 实现代码仓目录名（如 `ability_ability_runtime`） |
 | `declaration_file` | .d.ts 声明文件相对路径 |

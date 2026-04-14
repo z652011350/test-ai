@@ -2,6 +2,7 @@
 batch_scan_all.py - 批量遍历所有 Kit 调用 scan_kit.py
 
 从 kit_compont.csv 中提取去重的 Kit 名称，依次生成并执行 scan_kit.py 命令。
+python3 /Users/spongbob/for_guance/api_dfx_2.0/scripts/kit-scan/batch_scan_all.py -kits "Ability" -doc_path /Users/spongbob/for_guance/api_dfx_2.0/data/docs -skip_extract
 """
 
 import csv
@@ -22,7 +23,7 @@ SCAN_KIT_SCRIPT: Path = Path(__file__).resolve().parent / "scan_kit.py"
 # 固定参数
 JS_DECL_PATH: str = "/Users/spongbob/for_guance/api_dfx/api/interface_sdk-js"
 REPO_BASE: str = "/Users/spongbob/for_guance/api_dfx/DataBases"
-OUT_PATH: str = "/Users/spongbob/for_guance/api_dfx_2.0/scan_out/api-level-scan-test"
+OUT_PATH: str = "/Users/spongbob/for_guance/api_dfx_2.0/scan_out/scan-test_414"
 DOC_PATH:str = "/Users/spongbob/for_guance/api_dfx_2.0/data/docs"
 
 def load_unique_kit_names(csv_path: Path) -> list[str]:
@@ -44,7 +45,7 @@ def load_unique_kit_names(csv_path: Path) -> list[str]:
     return kits
 
 
-def build_command(kit_name: str, skip_extract: bool = False) -> list[str]:
+def build_command(kit_name: str, skip_extract: bool = False, doc_path: str = "") -> list[str]:
     """构建单个 Kit 的 scan_kit.py 命令。"""
     cmd = [
         sys.executable,
@@ -56,6 +57,8 @@ def build_command(kit_name: str, skip_extract: bool = False) -> list[str]:
     ]
     if skip_extract:
         cmd.append("-skip_extract")
+    if doc_path:
+        cmd.extend(["-doc_path", doc_path])
     return cmd
 
 
@@ -72,6 +75,11 @@ def parse_args():
         "-skip_extract",
         action="store_true",
         help="跳过 kit-api-extract 步骤（已有 api.jsonl 和 impl_api.jsonl 时使用）",
+    )
+    parser.add_argument(
+        "-doc_path",
+        default=str(DOC_PATH),
+        help=f"API 错误码文档目录路径 (默认: {DOC_PATH})",
     )
     return parser.parse_args()
 
@@ -109,7 +117,7 @@ def main():
         print(f"共发现 {len(kits)} 个 Kit\n")
 
     for i, kit in enumerate(kits, 1):
-        cmd = build_command(kit, args.skip_extract)
+        cmd = build_command(kit, args.skip_extract, args.doc_path)
         cmd_str = " ".join(cmd)
 
         if args.dry_run:

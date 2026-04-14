@@ -2,6 +2,7 @@
 batch_scan_all.py - 批量遍历所有 Kit 调用 scan_kit.py（Harness 模式）
 
 从 kit_compont.csv 中提取去重的 Kit 名称，依次生成并执行 scan_kit.py 命令。
+python3 /Users/spongbob/for_guance/api_dfx_2.0/scripts/kit-scan-test/batch_scan_all.py -kits "Ability" -skip_extract
 """
 
 import csv
@@ -22,7 +23,7 @@ SCAN_KIT_SCRIPT: Path = Path(__file__).resolve().parent / "scan_kit.py"
 # 固定参数
 JS_DECL_PATH: str = "/Users/spongbob/for_guance/api_dfx/api/interface_sdk-js"
 REPO_BASE: str = "/Users/spongbob/for_guance/api_dfx/DataBases"
-OUT_PATH: str = "/Users/spongbob/for_guance/api_dfx_2.0/scan_out/api-level-scan-test"
+OUT_PATH: str = "/Users/spongbob/for_guance/api_dfx_2.0/scan_out/scan-test_414_magent"
 DOC_PATH:str = "/Users/spongbob/for_guance/api_dfx_2.0/data/docs"
 
 

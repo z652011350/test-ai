@@ -14,7 +14,9 @@ description: >
   "api_input": "JSONL 文本内容或 JSONL 文件路径（每行一个 JSON 对象）",
   "repo_base": "代码仓库基础目录（包含各部件仓库的根目录）",
   "rule_xlsx": "规则 XLSX 文件路径（可选，覆盖 config/rule.json）",
-  "out_path": "输出目录"
+  "out_path": "输出目录",
+  "api_error_code_doc_path": "API 错误码文档开源仓根目录（可选，包含 zh-cn 目录）",
+  "kit_name": "Kit 名称（可选，如 'Ability Kit'）"
 }
 ```
 
@@ -24,6 +26,8 @@ description: >
 | `repo_base` | 是 | 代码仓库基础目录，包含各 OpenHarmony 部件仓库 |
 | `rule_xlsx` | 否 | 规则 XLSX 文件，提供时先转换为 config/rule.json |
 | `out_path` | 是 | 输出目录，结果保存至 `out_path/api_scan/` |
+| `api_error_code_doc_path` | 否 | API 错误码文档开源仓根目录（包含 zh-cn 目录），提供时提取错误码文档供审计参考 |
+| `kit_name` | 否 | Kit 名称（如 "Ability Kit"），与 `api_error_code_doc_path` 同时提供时提取该 Kit 的错误码文档 |
 
 ---
 
@@ -32,7 +36,7 @@ description: >
 每行一个 JSON 对象，包含 8 个字段：
 **格式1**
 ```json
-{"api_declaration": "function setController(controller: WindowAnimationController): void", "module_name": "@ohos.animation.windowAnimationManager", "impl_api_name": "RSWindowAnimationManager::SetController", "impl_repo_path": "graphic_graphic_2d", "declaration_file": "api/@ohos.animation.windowAnimationManager.d.ts", "NAPI_map_file": "graphic_graphic_2d/interfaces/kits/napi/graphic/animation/window_animation_manager/rs_window_animation_manager.cpp", "Framework_decl_file": "graphic_graphic_2d/rosen/modules/animation/window_animation/include/rs_window_animation_stub.h", "impl_file_path": "graphic_graphic_2d/interfaces/kits/napi/graphic/animation/window_animation_manager/rs_window_animation_manager.cpp"}
+{"api_declaration": "function setController(controller: WindowAnimationController): void","js doc": "/**\n xxx */", "module_name": "@ohos.animation.windowAnimationManager", "impl_api_name": "RSWindowAnimationManager::SetController", "impl_repo_path": "graphic_graphic_2d", "declaration_file": "api/@ohos.animation.windowAnimationManager.d.ts", "NAPI_map_file": "graphic_graphic_2d/interfaces/kits/napi/graphic/animation/window_animation_manager/rs_window_animation_manager.cpp", "Framework_decl_file": "graphic_graphic_2d/rosen/modules/animation/window_animation/include/rs_window_animation_stub.h", "impl_file_path": "graphic_graphic_2d/interfaces/kits/napi/graphic/animation/window_animation_manager/rs_window_animation_manager.cpp"}
 ```
 
 **格式2**
@@ -88,7 +92,19 @@ python3 {{skill_path}}/scripts/convert_xlsx_to_json.py "{{rule_xlsx}}" "{{skill_
 
 若 `example`、`instructions` 为空，则积极探索代码仓库，识别任何违反规则描述的条目。描述中带有"是否"的，当"否"的情况发生时即为违反该描述。
 
-**1.3** 过滤评分类规则：
+**1.3** 如果用户同时提供了 `api_error_code_doc_path` 和 `kit_name`，提取错误码文档：
+
+```bash
+python3 {{skill_path}}/scripts/extract_errorcode_docs.py "{{api_error_code_doc_path}}" "{{kit_name}}" "{{out_path}}/api_scan/error_code_doc"
+```
+
+输出目录为 `{out_path}/api_scan/error_code_doc/`。
+**注意**
+其中{{kit_name}}变量的形式应为"Ability Kit"、"Feature Kit"、"ArkGraphics 3D"、"User Authentication Kit"等
+
+如果脚本报错或未提取到文件，打印警告 `[Warning] No error code docs extracted for kit '{{kit_name}}'`，继续执行后续步骤（不中断流程）。
+
+**1.4** 过滤评分类规则：
 
 ```bash
 python3 {{skill_path}}/scripts/filter_rules.py "{{skill_path}}/config/rule.json" -o "{{out_path}}/api_scan/active_rules.json"
@@ -132,14 +148,68 @@ python3 {{skill_path}}/scripts/filter_rules.py "{{skill_path}}/config/rule.json"
 
 在 `{repo_base}/` 中搜索 `declaration_file`。读取完整文件内容。提取 `js_doc`（如果尚未提供），解析 `@throws`、`@permission`、`@systemapi`、`@syscap`、`@since` 标签。
 
+**3.3.1 JSDoc 标签精确提取（关键步骤）**
+
+从声明文件中提取标签时，必须严格匹配当前审计的 API 重载版本，不能将同一方法名下不同重载版本的标签混淆。
+
+提取规范：
+
+a) **定位目标 API 的 JSDoc 块**
+   - 根据输入中的 `api_declaration` 字段，在声明文件中找到完全匹配的函数签名
+   - 该函数签名**上方**的 `/** ... */` 注释块即为该 API 的 JSDoc
+   - 如果同一方法名有多个重载（如 `startAbility(want, callback)` 和 `startAbility(want, options)`），每个重载有独立的 JSDoc 块，必须读取对应版本的
+
+b) **@since 版本提取**
+   - 从目标 API 的 JSDoc 块中提取所有 `@since` 行
+   - 格式通常为 `@since <版本号>` 或 `@since <版本号> dynamic` / `@since <版本号> static`
+   - **版本号就是 `@since` 后面的数字**（如 `@since 23 static` 的版本号是 23）
+   - **禁止将 `@since 23 static` 解读为版本 24**。23 就是 23，24 就是 24，`static` 只表示 SDK 链接模式
+   - 如果有多个 @since 声明（如 `@since 14 dynamic` + `@since 23 static`），取**最后一个**声明的版本号作为该 API 的 since 版本
+
+c) **@systemapi 标签验证**
+   - 检查目标 API 的 JSDoc 块中是否存在 `@systemapi` 标签
+   - 注意：同一方法名的不同重载可能一个有 @systemapi 一个没有（如 `startAbilityByCall` 无 @systemapi，但 `startAbilityByCallWithAccount` 有）
+   - **必须确认是当前审计 API 对应的重载版本**的 JSDoc 中有此标签
+   - **禁止从实现代码中的 `CHECK_IS_SYSTEM_APP` 等宏反推 @systemapi 标签存在**
+
+d) **@permission 标签验证**
+   - 同上，从目标 API 的 JSDoc 块中提取 `@permission` 标签值
+
+e) **标签缺失处理**
+   - 如果声明文件在仓库中不存在或无法定位目标 API 的 JSDoc 块，**禁止假设标签存在或不存在**
+   - 此时与该标签相关的规则（01.001/01.002/01.003）不应触发，跳过这些规则
+   - 在 raw_findings 中不生成任何发现
+   - 禁止输出 "无法确认但可能违规" 类发现
+
 **3.4 规则驱动审计**
 
 对 `active_rules.json` 中的每条规则，审计 API 的实现代码和声明：
+
+**规则前置条件检查（在审计每条规则前必须执行）**
+
+在应用每条规则之前，必须验证该规则的前提条件是否满足。前提条件不满足时，跳过该规则，不生成任何发现。
+
+| 规则 ID | 前提条件 | 验证方法 |
+|---------|---------|---------|
+| 01.001 | API 的 JSDoc 中**确实存在** `@permission` 标签 | 从 3.3.1 步骤提取的标签中确认 |
+| 01.002 | API 的 JSDoc 中**确实存在** `@systemapi` 标签 | 从 3.3.1 步骤提取的标签中确认 |
+| 01.003 | API 的 JSDoc 中**最后一个** `@since` 的版本号 **>= 24** | 从 3.3.1 步骤提取的版本号确认 |
+| 01.004 | 需要 syscap 配置（暂用 API 的 @syscap 标签判断） | 从 JSDoc 提取 @syscap |
+| 01.005 | 代码中存在模拟器判断逻辑 | 扫描实现代码 |
+| 其他规则 | 无特殊前提条件 | — |
+
+**严格执行**：
+- 前提条件检查必须在读取声明文件后、生成任何发现前完成
+- 如果声明文件不存在或 JSDoc 块无法定位，视为前提条件不满足
+- 禁止在 "无法确认" 的情况下仍然生成发现
+
+通过前置条件后，执行以下审计动作：
 
 - 读取实现函数体（错误处理分支、返回路径）
 - 读取声明文件中的 js_doc（`@throws`、`@permission`、`@systemapi`）
 - 检查错误码映射（沿调用链追踪）
 - 结合 `references/problem_patterns_checklist.md` 识别问题模式
+- 如果提供了 `api_error_code_doc_path` 和 `kit_name` 且提取成功，读取 `{out_path}/api_scan/error_code_doc/` 目录下的 `.md` 文件，将官方错误码定义与实现中的实际错误码进行对比（用于 02.004、03.001、03.002 等文档一致性规则）
 - **记录调用链路径**：对每个发现的问题，记录从 NAPI 入口到问题位置的完整调用路径（如 `NAPI_PAGetWant->GetWant->Ability::GetWant`），写入 `finding_description`
 
 每个发现生成一个结构化 JSON 对象，**必须严格遵循以下 raw_findings.json 格式**。
@@ -267,6 +337,10 @@ NAPI_PAGetWant->GetWant->Ability::GetWant
 - 检查 `severity_level` 是否为 `严重`/`高`/`中`/`低` 之一
 - 检查 `affected_error_codes` 是否为逗号分隔数字或空字符串
 - 检查所有 9 个必需字段（`rule_id`、`rule_description`、`finding_description`、`evidence`、`component`、`affected_apis`、`modification_suggestion`、`severity_level`、`affected_error_codes`）是否存在
+- **检查规则 01.001 的发现**：对应的 API JSDoc 中是否确实存在 `@permission` 标签（须从声明文件验证，不能从实现代码推断）
+- **检查规则 01.002 的发现**：对应的 API JSDoc 中是否确实存在 `@systemapi` 标签（须精确匹配当前审计的重载版本，不能混淆同名方法的不同重载）
+- **检查规则 01.003 的发现**：对应的 API 最后一个 `@since` 版本号是否确实 >= 24（`@since 23 static` 的版本号是 23，不是 24）
+- **检查 finding 中的 evidence**：对于标签类规则（01.001/01.002/01.003），evidence 中是否包含了声明文件（.d.ts/.d.ets）的证据，而非仅包含实现文件
 
 发现不符合要求的条目必须修正，随后才能进入分类验证。
 
@@ -392,6 +466,7 @@ python3 {{skill_path}}/scripts/validate_output.py "{{out_path}}/api_scan" --rule
 | `references/problem_patterns_checklist.md` | 常见问题模式（40 项） |
 | `references/common_error_codes.md` | 通用错误码参考（201/202/203/401/801） |
 | `references/LESSONS_LEARNED.md` | 历史审计经验 |
+| `scripts/extract_errorcode_docs.py` | 提取 Kit 错误码文档（可选） |
 | `templates/api_scan_summary.md` | 汇总报告模板 |
 
 ---
@@ -410,6 +485,9 @@ python3 {{skill_path}}/scripts/validate_output.py "{{out_path}}/api_scan" --rule
 10. 无发现的 API 不输出 JSONL 行，但仍包含在调用链 JSON 中
 11. 如果输入量较大（>20 个 API），每处理 10 个 API 将中间结果刷新到文件
 12. 仅报告实际违反规则的问题，不得报告遵守规则的情况
+13. **JSDoc 标签必须从声明文件实际读取**，禁止从实现代码推断标签（如从 CHECK_IS_SYSTEM_APP 推断 @systemapi）
+14. **@since 版本号必须取字面数值**，禁止将 since 23 映射为 24、将 since 14 映射为其他版本
+15. **规则前提条件不满足时禁止生成发现**，不得输出 "无法确认但可能违规" 类发现
 
 ---
 

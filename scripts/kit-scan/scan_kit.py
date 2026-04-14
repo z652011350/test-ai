@@ -13,6 +13,7 @@ scan_kit.py - Kit 级 API 审计流水线入口
 
 import argparse
 import sys
+from functools import partial
 from pathlib import Path
 
 import batch_pipeline
@@ -89,6 +90,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="跳过 kit-api-extract 步骤（已有 api.jsonl 和 impl_api.jsonl 时使用）",
     )
+    parser.add_argument(
+        "-doc_path",
+        default="",
+        help="API 错误码文档目录路径（可选）",
+    )
     return parser.parse_args()
 
 
@@ -154,10 +160,12 @@ def main():
     api_path = output_dir / "api.jsonl"
     impl_api_path = output_dir / "impl_api.jsonl"
 
-    if not api_path.exists() or not impl_api_path.exists():
-        print(f"[错误] 缺少 api.jsonl 或 impl_api.jsonl")
+    if not api_path.exists():
+        print(f"[错误] 缺少 api.jsonl ")
         sys.exit(1)
-
+    if not impl_api_path.exists():
+        print(f"[错误] 缺少 impl_api.jsonl")
+        sys.exit(1)
     # 加载数据并分批
     empty_impl, non_empty_impl = batch_pipeline.load_and_split_impl_api(impl_api_path)
     matched_api = batch_pipeline.load_matching_api_data(api_path, empty_impl)
@@ -171,9 +179,15 @@ def main():
 
     # 执行批量审计
     try:
-        claude_runner.run_batch_scan(
-            batch_paths, output_dir, repo_base, batch_pipeline.build_scan_prompt
+        build_prompt = partial(
+            batch_pipeline.build_scan_prompt,
+            doc_path=args.doc_path,
+            kit_name=kit_name,
         )
+        claude_runner.run_batch_scan(
+            batch_paths, output_dir, repo_base, build_prompt
+        )
+        # pass
     finally:
         # 合并结果（直接扫描 batch_result 目录）
         merged_path = output_dir / "batch_result" / "merged_api_scan_findings.jsonl"

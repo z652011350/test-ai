@@ -1,70 +1,31 @@
-# kit-measurement Skill 经验总结
+# audit-error-codes Skill 经验总结
 
-本文档总结了在审计 HarmonyOS/OpenHarmony Kit API 规范性过程中的经验教训和最佳实践。
+本文档总结了在审核 HarmonyOS/OpenHarmony 部件错误码使用情况过程中的经验教训和最佳实践。
 
 ## 更新日期
 
-- 2026-04-13: JSDoc 标签精确提取与规则前置条件（v6.0）
-- 2026-04-01: 改造为规则驱动审计模式（v5.0）
+- 2026-04-14: Kit/Component 概念修正（v5.0）
 - 2026-02-23: communication_netmanager_base 审核经验（v4.0）
 - 2026-02-13: multimedia_audio_framework 审核经验（v3.0）
 
 ---
 
-## v6.0 经验总结 (2026-04-13)
+## v5.0 经验总结 (2026-04-14)
 
-### 1. JSDoc 标签必须从声明文件精确提取
+### 1. Kit 与 Component 概念区分
 
-**问题**: 审计工具未实际读取 .d.ts 声明文件中的 JSDoc 标签，导致规则前提条件判断错误。
+**问题**: 原有 skill 使用 `kit_path` 作为参数名，但实际传入的路径是**部件（Component）目录**（如 `DataBases/communication_netmanager_base/`），而非 Kit 目录。一个 Kit 可以包含多个 Component。
 
-**案例**:
-- 规则 01.003 要求 @since >= 24，但全部 29 条发现的 API 实际 @since 为 23 或更低
-- 规则 01.002 要求 @systemapi 标签，但 3 条发现的 API 实际无此标签
+**概念定义**:
+- **Kit**: 面向开发者的 API 聚合层，由声明文件 `@kit.{Name}.d.ts` 定义（如 Network Kit）
+- **Component (部件)**: 实际的源码仓库（如 `communication_netmanager_base`），是分析的基本单位
+- **映射关系**: 1 Kit = 1~N Components，定义在 `kit_compont.csv`
 
-**根因**:
-- 将 `@since 23 static` 错误映射为版本 24
-- 将同名方法的不同重载版本的标签混淆（如 `startAbilityByCall` 无 @systemapi，但 `startAbilityByCallWithAccount` 有）
-- 在声明文件不存在时仍假设标签存在
-
-**修正**: SKILL.md 新增 3.3.1 步骤，明确 JSDoc 标签提取规范和规则前置条件。
-
-### 2. @since 版本号必须取字面数值
-
-**问题**: 审计工具对 `@since` 标签的版本号理解错误。
-
-**关键规则**:
-- `@since 23` 的版本号是 23，不是 24
-- `@since 23 static` 的版本号仍然是 23，"static" 只表示 SDK 链接模式
-- `@since 14 dynamic` + `@since 23 static` 是多版本声明，取最后一个（23）
-- 规则 01.003 的阈值是 >= 24，23 不满足
-
-**禁止行为**:
-- 禁止将 23 映射为 24
-- 禁止用 Copyright 年份推测 since 版本
-- 禁止在无法确认 since 时仍然报告违规
-
-### 3. API 重载版本标签不能混淆
-
-**问题**: 同一方法名的不同重载版本可能有不同的 JSDoc 标签。
-
-**典型案例**:
-- `startAbilityByCall(want)` — 无 @systemapi
-- `startAbilityByCallWithAccount(want, accountId)` — 有 @systemapi
-- `connectServiceExtensionAbility(want, options)` — 无 @systemapi
-- `connectServiceExtensionAbilityWithAccount(want, accountId, options)` — 有 @systemapi
-
-**规则**: 必须根据 `api_declaration` 字段精确匹配对应重载版本的 JSDoc 块。
-
-### 4. 规则前置条件不满足时不生成发现
-
-**问题**: 多条发现明确写了"无法确认版本"但仍然输出为违规。
-
-**规则**:
-- 如果声明文件不存在 → 跳过依赖声明文件标签的规则
-- 如果 JSDoc 中无 @since → 跳过规则 01.003
-- 如果 JSDoc 中无 @systemapi → 跳过规则 01.002
-- 如果 JSDoc 中无 @permission → 跳过规则 01.001
-- 禁止输出 "无法确认但可能违规" 类发现
+**修正**:
+- 参数名从 `kit_path` 更名为 `component_path`
+- 脚本参数同步更名（`extract_js_napi_api.py`、`extract_ndk_api.py`、`scan_error_to_string.py`）
+- 保持向后兼容：`kit_path` 自动映射为 `component_path`
+- **本 skill 以部件为单位分析**，若需分析整个 Kit，需分别对每个 component 调用
 
 ---
 
@@ -85,13 +46,13 @@
 **经验**:
 - 手动分析会遗漏同步版本 API（如 `getDefaultNetSync`）
 - 手动分析会遗漏 observer 方法（`on`/`off`）
-- 必须使用 `extract_js_api.py` 和 `extract_c_api.py` 脚本
+- 必须使用 `extract_js_napi_api.py` 和 `extract_ndk_api.py` 脚本
 - 脚本提取的 JSON 文件应保存到 out_path 供后续分析
 
 **脚本使用**:
 ```bash
-python extract_js_api.py {{kit_path}} --js-api-header-root {{js_api_header_root}} --kit-name {{kit_name}} -o {{out_path}}/js_api.json
-python extract_c_api.py {{kit_path}} --c-api-header-root {{c_api_header_root}} --kit-name {{kit_name}} -o {{out_path}}/c_api.json
+python extract_js_napi_api.py {{component_path}} -o {{out_path}}/js_api.json
+python extract_ndk_api.py {{component_path}} -o {{out_path}}/ndk_api.json
 ```
 
 ### 2. 成功码（0）不是错误码
@@ -423,7 +384,7 @@ static const std::set<uint32_t> ERROR_CODES = {
 
 ### 1. API 清单收集
 
-- ✅ 必须使用 extract_js_api.py 和 extract_c_api.py 脚本
+- ✅ 必须使用 extract_js_napi_api.py 和 extract_ndk_api.py 脚本
 - ✅ 脚本提取的 JSON 文件保存到 out_path
 - ❌ 避免手动分析 API，会遗漏大量内容
 
@@ -477,5 +438,5 @@ static const std::set<uint32_t> ERROR_CODES = {
 
 ---
 
-*最后更新: 2026-02-23*
-*基于 communication_netmanager_base kit 审核经验*
+*最后更新: 2026-04-14*
+*基于 Kit/Component 概念修正经验*
