@@ -357,7 +357,7 @@ python3 {{skill_path}}/scripts/classify_findings.py "{{out_path}}/api_scan/raw_f
 | 文件 | 说明 |
 |------|------|
 | `api_scan_findings.jsonl` | JSONL 格式审计发现，每行一个发现（13 个字段） |
-| `api_call_chains.json` | 每个 API 的调用链 JSON（2 层深度） |
+| `api_call_chains.json` | 每个 API 的调用链 JSON |
 | `api_scan_summary.md` | 汇总报告，参照 `templates/api_scan_summary.md` |
 
 **JSONL 每行字段**：
@@ -461,7 +461,7 @@ python3 {{skill_path}}/scripts/validate_output.py "{{out_path}}/api_scan" --rule
 | 文件 | 用途 |
 |------|------|
 | `config/rule.json` | 唯一规则来源（16 条审计规则） |
-| `references/call_chain_analysis_guide.md` | 2 层调用链分析方法 |
+| `references/call_chain_analysis_guide.md` | 调用链分析方法 |
 | `references/output_schema.md` | JSONL + 调用链输出结构定义 |
 | `references/problem_patterns_checklist.md` | 常见问题模式（40 项） |
 | `references/common_error_codes.md` | 通用错误码参考（201/202/203/401/801） |
@@ -477,7 +477,7 @@ python3 {{skill_path}}/scripts/validate_output.py "{{out_path}}/api_scan" --rule
 2. **每个 API 独立审计**，不按 Kit 分组
 3. **kit 从声明文件 `@kit` 标签获取**，不从 kit_compont.csv 查询
 4. **同一 rule_id + 同一 API 的多处违反必须合并**为一条 finding，所有违反点放入 evidence 数组，finding_description 综合描述
-5. **调用链分析限制 2 层**：API → Level 1 → Level 2，停止。不追踪 Level 2 的进一步调用
+5. **调用链分析无深度限制**
 6. **影响的错误码** 必须是开发者通过 BusinessError.code 收到的数值错误码，不是原生层内部错误码
 7. **成功码（0）不是错误码**，在影响的错误码中排除
 8. 每个 API 必须审计 `active_rules.json` 中的所有规则
@@ -499,4 +499,3 @@ python3 {{skill_path}}/scripts/validate_output.py "{{out_path}}/api_scan" --rule
 - 禁止使用 extract_js_api.py 或 extract_c_api.py（用户直接提供 API 列表）
 - 禁止跳过 validate_output.py 验证步骤
 - 禁止忽略验证错误
-- 禁止追踪超过 2 层的外部函数调用
