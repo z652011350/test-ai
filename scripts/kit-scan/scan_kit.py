@@ -130,6 +130,7 @@ def main():
         print("=" * 60)
 
         output_dir.mkdir(parents=True, exist_ok=True)
+        
         prompt = build_extract_prompt(
             kit_name, str(js_decl_path), str(repo_base), str(output_dir)
         )

@@ -148,6 +148,7 @@ def run_batch_scan(
 
         batch_out_dir.mkdir(parents=True, exist_ok=True)
         prompt = build_prompt_fn(batch_path, batch_out_dir, repo_base)
+        print(f"prompt :{prompt}")
 
         print(f"\n{'=' * 50}")
         print(f"[claude_runner] 处理 batch {idx + 1}/{total}")

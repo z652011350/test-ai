@@ -100,7 +100,7 @@ python3 {{skill_path}}/scripts/extract_errorcode_docs.py "{{api_error_code_doc_p
 
 输出目录为 `{out_path}/api_scan/error_code_doc/`。
 **注意**
-其中{{kit_name}}变量的形式应为"Ability Kit"、"Feature Kit"、"ArkGraphics 3D"、"User Authentication Kit"等
+其中{{kit_name}}变量的形式应为"Ability Kit"、"Feature Kit"、"ArkGraphics 3D"、"User Authentication Kit"等，若输入的{{Ability Kit}}为"AbilityKit"等形式需要先转为"Ability Kit"的形式
 
 如果脚本报错或未提取到文件，打印警告 `[Warning] No error code docs extracted for kit '{{kit_name}}'`，继续执行后续步骤（不中断流程）。
 

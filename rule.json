@@ -1,103 +1,157 @@
 {
   "rules": [
     {
-      "id": "3.2.6",
-      "description": "返回值定义完备",
+      "id": "APITEST.ERRORCODE.01.001",
+      "description": "当API带有@permission标签时，检查API是否定义了在鉴权失败时抛出201错误码",
       "example": {
-        "good case": "declaration: getConnectionProperties(netHandle: NetHandle): Promise<ConnectionProperties>\nimplementation: 所有异常路径均通过 reject(BusinessError) 返回，且 JSDoc 已声明相关错误场景。",
-        "bad case": "declaration: getInterfaceName(): string\nimplementation: if (!interface) { return ''; } // 返回空字符串，但声明未说明该场景"
+        "good case": "带有 @permission 标签，同时在接口声明中显式列出了 201 错误码，实现中在权限校验失败时向开发者返回了 201。\n\n```C++\n/**\n * @permission ohos.permission.SYSTEM_FLOAT_WINDOW\n * @throws { BusinessError } 201 - Permission denied. An application does not have the permission to call the API.\n */\nfunction createWindow(config: Configuration): Window;\n\nnapi_value NapiCreateWindow(napi_env env, napi_callback_info info)\n{\n    uint64_t tokenId = AccessTokenHelper::GetCallingTokenID();\n    bool hasPermission = AccessTokenHelper::VerifyAccessToken(tokenId, \"ohos.permission.SYSTEM_FLOAT_WINDOW\");\n    if (!hasPermission) {\n        napi_throw(env, JsErrUtils::CreateJsError(env, 201, \"Permission denied.\"));\n        return NapiGetUndefined(env);\n    }\n    return CreateWindow(env, info);\n}\n```",
+        "bad case": "1、带有 @permission 标签，但接口声明中没有显式列出 201 错误码。\n\n```C++\n/**\n * @permission ohos.permission.CAMERA\n * @throws { BusinessError } 7400101 - Parameter error.\n */\nfunction createCameraInput(camera: CameraDevice): CameraInput;\n```\n\n2、接口声明中列出了 201，但实现中权限校验失败时没有向开发者返回任何错误码。\n\n```C++\nif (!hasPermission) {\n    return NapiGetUndefined(env);\n}\n```\n\n3、接口声明中列出了 201，但实现中权限校验失败时返回了其他错误码。\n\n```C++\nif (!hasPermission) {\n    napi_throw(env, JsErrUtils::CreateJsError(env, 401, \"Parameter error.\"));\n    return NapiGetUndefined(env);\n}\n```"
       },
-      "instructions": "检查 API 返回值定义是否覆盖正常、异常和无效场景。需要解析声明文件中的返回类型、回调参数类型、联合类型定义，并扫描实现中的 return、reject、throw、callback(err, data) 等分支。重点检查数字、布尔、数组、枚举、对象、Error 回调参数等返回模式是否存在声明外返回值，是否存在异常场景未定义返回行为，以及 Error 回调在无异常时是否错误使用非 null 表示无异常。"
+      "instructions": "核心目标：确保所有声明了 @permission 的接口，在权限校验失败时统一向开发者返回 201 错误码。\n检查规则：\n   第一步：权限声明识别\n      检查动作：扫描 .d.ts、.d.ets、.h 文件中的 API 注释。\n      判定逻辑：若 API 声明中存在 @permission <permission_name> 标签，则进入后续检查；若不存在，则本规则不适用。\n   第二步：声明层检查\n      检查动作：检查该 API 的 @throws { BusinessError } 或 .h 中对错误返回的说明。\n      判定逻辑：必须显式声明 201，且语义应对应权限校验失败。\n   第三步：实现层检查\n      检查动作：在 .cpp、.c、.ts、.ets 等实现文件中查找权限校验逻辑，例如 VerifyAccessToken、CheckPermission、AccessToken 校验或等价逻辑。\n      判定逻辑：权限校验失败分支最终必须向开发者返回 201；若走统一错误映射函数，则检查映射后的最终结果是否为 201。\n   第四步：违规判定\n      判定逻辑：存在 @permission 但声明层未定义 201，或实现中权限失败未返回 201，均判定为不通过。\n   例外说明：若当前上下文只能定位到声明文件，无法看到实现，结果应标记为需人工复核，不能直接判定通过。"
     },
     {
-      "id": "4.3.6",
-      "description": "801错误码返回的错误信息要清晰表述设备不支持原因",
+      "id": "APITEST.ERRORCODE.01.002",
+      "description": "当API带有@systemapi标签时，检查API实现中是否定义了在非系统应用调用系统API时抛出202错误码",
       "example": {
-        "good case": "The device does not support Wi-Fi feature due to missing WLAN hardware module.",
-        "bad case": "not supported"
+        "good case": "带有 @systemapi 标签，同时在接口声明中显式列出了 202 错误码，实现中在非系统应用调用时向开发者返回了 202。\n\n```C++\n/**\n * @throws { BusinessError } 202 - Permission denied. A non-system application is not allowed to call a system API.\n * @systemapi hide for inner use.\n */\nfunction setTouchpadScrollRows(rows: number): Promise<void>;\n\nnapi_value TouchpadScrollRows(napi_env env, napi_callback_info info)\n{\n    if (!checkSystemApp()) {\n        napi_throw_error(env, \"202\", \"A non-system application is not allowed to call a system API.\");\n        return NapiGetUndefined(env);\n    }\n    return doTouchpadScrollRows(env, info);\n}\n```",
+        "bad case": "1、带有 @systemapi 标签，但接口声明中没有显式列出 202 错误码。\n\n```C++\n/**\n * @throws { BusinessError } 401 - Parameter error.\n * @systemapi hide for inner use.\n */\nfunction setTouchpadScrollRows(rows: number): Promise<void>;\n```\n\n2、接口声明中列出了 202，但实现中非系统应用调用时没有向开发者返回任何错误码。\n\n```C++\nif (!checkSystemApp()) {\n    return NapiGetUndefined(env);\n}\n```\n\n3、接口声明中列出了 202，但实现中非系统应用调用时返回了其他错误码。\n\n```C++\nif (!checkSystemApp()) {\n    napi_throw_error(env, \"401\", \"Parameter error.\");\n    return NapiGetUndefined(env);\n}\n```"
       },
-      "instructions": "检查 801 错误码在声明侧和实现侧的描述是否清晰说明设备不支持的具体原因。需要扫描 JSDoc、throws 描述、错误码注释，以及实现中的 throw、BusinessError、日志字符串、回调错误对象等。若仅出现“不支持”“not supported”等模糊描述，而没有指出缺失的硬件、特性或系统能力，则判定为违规。"
+      "instructions": "核心目标：确保所有声明了 @systemapi 的接口，在非系统应用调用失败时统一向开发者返回 202 错误码。\n检查规则：\n   第一步：系统 API 声明识别\n      检查动作：扫描 .d.ts、.d.ets、.h 文件中的 API 注释。\n      判定逻辑：若 API 声明中存在 @systemapi 标签，则进入后续检查；若不存在，则本规则不适用。\n   第二步：声明层检查\n      检查动作：检查该 API 的 @throws { BusinessError } 或 .h 中错误返回说明。\n      判定逻辑：应显式声明 202，且语义应为非系统应用调用系统 API 被拒绝。\n   第三步：实现层检查\n      检查动作：查找实现中“是否系统应用”的校验逻辑，例如 checkSystemApp、token 身份判断、系统应用标识校验或等价逻辑。\n      判定逻辑：非系统应用调用失败分支最终必须向开发者返回 202；若走统一错误映射函数，则检查最终结果是否为 202。\n   第四步：违规判定\n      判定逻辑：带有 @systemapi 标签但声明层未定义 202，或实现中非系统应用调用失败未返回 202，均判定为不通过。\n   例外说明：若当前上下文无法定位实现，只能看到声明文件，结果应标记为需人工复核。"
     },
     {
-      "id": "5.1.2.11",
-      "description": "显式声明所有 null/undefined",
+      "id": "APITEST.ERRORCODE.01.003",
+      "description": "当新增API（since 版本号大于或等于\"6.1.1(24)\"或\"24\"）时，检查是否定义了401错误码，如果出现了则不符合规范",
       "example": {
-        "good case": "function getConfig(key: string): string | undefined",
-        "bad case": "declaration: function getConfig(key: string): string\nimplementation: if (!key) { return undefined; }"
+        "good case": "该 API 的 @since 为 24，单接口声明中没有显式定义 401 错误码。\n\n```C++\n/**\n * @throws { BusinessError } 1300002 - This window state is abnormal.\n * @since 24 dynamic&static\n */\nreleaseUIContent(): Promise<void>;\n```",
+        "bad case": "该 API 的 @since 为 24，单接口声明中显式定义了 401 错误码。\n\n```C++\n/**\n * @throws { BusinessError } 201 - Permission denied.\n * @throws { BusinessError } 401 - Parameter error.\n * @since 24 dynamic&static\n */\nfunction getLaunchWantForBundleSync(bundleName: string, userId?: int): Want;\n```"
       },
-      "instructions": "检查 ArkTS 或声明文件中所有可能出现的 null 和 undefined 是否被显式声明。包括入参、返回值和属性。需要解析声明中的 ?、| null、| undefined 等类型信息，并结合实现中可能出现的 null/undefined 输入、输出、属性赋值和读取路径进行对照。若实现允许传入、返回或保存 null/undefined，但声明未显式体现，则判定为违规。"
+      "instructions": "核心目标：限制新增 ArkTS/ETS API 在单接口声明中显式列出 401 错误码。\n检查规则：\n   第一步：新增 API 识别\n      检查动作：扫描 API 注释中的全部 @since 标签。\n      判定逻辑：提取其中的版本数字。对“6.1.1(24)”按 24 处理，对“24 dynamic&static”按 24 处理。若同一 API 存在多个 @since，取最大版本号作为判定依据。\n   第二步：适用范围限定\n      判定逻辑：仅检查 ArkTS/ETS 单接口声明中的 @throws 列表，不检查底层框架实现是否可能统一返回通用 401。\n   第三步：错误码声明检查\n      检查动作：扫描该 API 单接口声明中的 @throws { BusinessError }。\n      判定逻辑：若有效 since 大于或等于 24，则不允许显式列出 401。\n   第四步：违规判定\n      判定逻辑：当有效 since 大于或等于 24 且单接口声明中显式列出 401 时，判定为不通过。\n   例外说明：公共通用错误码文档中统一解释 401 不属于本规则违规；C API 与 NDK 头文件不适用本规则。"
     },
     {
-      "id": "5.1.7.1",
-      "description": "声明应与实现在空值支持上保持一致",
+      "id": "APITEST.ERRORCODE.01.004",
+      "description": "当API实现中存在部分设备不支持时，检查API是否定义了返回801错误码",
       "example": {
-        "good case": "declaration: function setAddress(addr: string): void\nimplementation: addr 为 null 时同步抛出 401 参数错误。",
-        "bad case": "declaration: function setAddress(addr: string): void\nimplementation: if (addr == nullptr) { return; } // 静默忽略空值"
+        "good case": "API 依赖真实设备硬件能力，文档声明了 801，实现中在硬件能力不支持时返回了 801。\n\n```C++\n/**\n * @throws { BusinessError } 801 - Capability not supported.\n * @since 23 static\n */\nfunction onOrientationChange(callback: Callback<OrientationResponse>, options?: Options): void;\n\nnapi_value OrientationChange(napi_env env, napi_callback_info info)\n{\n    if (!checkDeviceSupport()) {\n        napi_throw_error(env, \"801\", \"Capability not supported.\");\n        return NapiGetUndefined(env);\n    }\n    return doOrientationChange(env, info);\n}\n```",
+        "bad case": "1、API 存在真实设备硬件能力不支持场景，但文档没有声明 801。\n\n```C++\n/**\n * @throws { BusinessError } 14500101 - Service exception.\n */\nfunction onColorChange(callback: Callback<OrientationResponse>, options?: Options): void;\n```\n\n2、文档声明了 801，但实现中硬件能力不支持时没有向开发者返回错误码。\n\n```C++\nif (!checkDeviceSupport()) {\n    return NapiGetUndefined(env);\n}\n```\n\n3、文档声明了 801，但实现中硬件能力不支持时返回了其他错误码。\n\n```C++\nif (!checkDeviceSupport()) {\n    napi_throw_error(env, \"401\", \"Parameter error.\");\n    return NapiGetUndefined(env);\n}\n```"
       },
-      "instructions": "检查声明与实现对空值支持是否一致。若声明未支持空值，则入参传入空值时应同步抛出 401 或等价运行时异常，返回值不应返回空值，属性读取不应返回空值，属性写入空值应抛出异常。需要重点扫描 NAPI/C++ 实现中的 return null、return undefined、属性 getter/setter、参数解析失败路径等。若声明未支持空值但实现接受空值、返回空值或静默忽略，则判定为违规。"
+      "instructions": "核心目标：确保 API 在真实设备硬件能力不支持时，统一通过 801 告知开发者。\n检查规则：\n   第一步：场景识别\n      检查动作：分析 API 是否依赖真实设备硬件或能力，例如传感器、NFC、特定硬件模块、设备能力位检查等。\n      判定逻辑：当 API 在部分真实设备上可能因硬件能力缺失而不可用时，本规则适用。\n   第二步：边界限定\n      判定逻辑：本规则仅覆盖“真实设备硬件能力不支持”场景；组件形态限制、模拟器不支持、跨平台不支持不属于本规则范围。\n   第三步：文档声明检查\n      检查动作：扫描 .d.ts、.d.ets、.h 中该 API 的错误码说明。\n      判定逻辑：应显式声明 801，语义应为设备能力不支持。\n   第四步：实现分支检查\n      检查动作：查找实现中与设备能力检查相关的分支，例如 checkDeviceSupport、硬件探测、能力位判断或等价逻辑。\n      判定逻辑：硬件能力不支持分支最终必须向开发者返回 801。\n   第五步：违规判定\n      判定逻辑：存在真实设备硬件能力不支持场景，但文档未声明 801，或实现未返回 801，均判定为不通过。\n   例外说明：若当前上下文无法判断该 API 的不可用原因究竟属于设备硬件能力、组件形态限制还是平台限制，结果应标记为需人工复核。"
     },
     {
-      "id": "5.1.7.5",
-      "description": "异常逻辑不返回空结果",
+      "id": "APITEST.ERRORCODE.01.005",
+      "description": "API 不支持模拟器使用 804 通用错误码",
       "example": {
-        "good case": "catch (e) { throw new BusinessError(INTERNAL_ERROR, 'Service unavailable'); }",
-        "bad case": "catch (e) { return null; }"
+        "good case": "API 在模拟器环境下不可用，实现中在模拟器环境下返回了 804，且 804 在单接口文档或公共通用错误码文档中有说明。\n\n```C++\n/**\n * @throws { BusinessError } 804 - Unsupported operation on the emulator.\n * @since 7\n */\nfunction enableNfc(): Promise<boolean>;\n\nnapi_value Nfc(napi_env env, napi_callback_info info)\n{\n    if (isEmulator()) {\n        napi_throw_error(env, \"804\", \"Unsupported operation on the emulator.\");\n        return NapiGetUndefined(env);\n    }\n    return doNfc(env);\n}\n```",
+        "bad case": "1、API 在模拟器环境下不可用，但实现中没有返回 804。\n\n```C++\nif (isEmulator()) {\n    return NapiGetUndefined(env);\n}\n```\n\n2、API 在模拟器环境下不可用，但实现中返回了其他错误码。\n\n```C++\nif (isEmulator()) {\n    napi_throw_error(env, \"401\", \"Parameter error.\");\n    return NapiGetUndefined(env);\n}\n```\n\n3、API 在模拟器环境下不可用，实现返回了 804，但单接口文档和公共通用错误码文档中都没有任何 804 说明。"
       },
-      "instructions": "检查语义上应返回有效结果的 API 在异常逻辑中是否错误返回了空结果。需要识别 try/catch、服务调用失败、数据库失败、系统调用失败等异常路径，并检查这些路径下是否返回 null、undefined、空对象、空字符串等伪正常结果。若异常场景没有抛出异常或返回错误对象，而是返回空结果，则判定为违规。"
+      "instructions": "核心目标：确保 API 在模拟器不支持场景下统一向开发者返回 804，并保证资料层存在对应说明。\n检查规则：\n   第一步：模拟器场景识别\n      检查动作：检索实现中的模拟器判断逻辑，例如 isEmulator、IsSimulator、系统属性判断或等价逻辑；也可结合明确的产品说明判定该 API 不支持模拟器。\n      判定逻辑：若 API 在模拟器环境下不可用，则进入后续检查。\n   第二步：实现分支检查\n      检查动作：检查模拟器不支持分支最终返回的错误码。\n      判定逻辑：必须向开发者返回 804。\n   第三步：文档说明检查\n      检查动作：检查该 API 的单接口声明，以及公共通用错误码文档。\n      判定逻辑：满足以下任一条件即可视为文档合规：\n         1. 单接口声明中显式说明 804；\n         2. 公共通用错误码文档中统一说明 804。\n   第四步：违规判定\n      判定逻辑：API 在模拟器环境下不可用，但实现未返回 804，或资料层既无单接口 804 说明也无公共 804 说明，均判定为不通过。\n   例外说明：若当前平台明确不存在模拟器形态，则本规则不适用；若只能推测不支持模拟器，无法找到代码或产品说明证据，结果应标记为需人工复核。"
     },
     {
-      "id": "5.1.7.8",
-      "description": "数组空结果返回空数组",
+      "id": "APITEST.ERRORCODE.01.006",
+      "description": "检查业务是否对1XX-9XX系统保留错误码自定义为其他错误类型、错误信息",
       "example": {
-        "good case": "declaration: function getAllInterfaces(): Array<NetInterface>\nimplementation: return [];",
-        "bad case": "declaration: function getAllInterfaces(): Array<NetInterface> | null\nimplementation: return null;"
+        "good case": "系统通用错误码的语义与规范保持一致。\n\n```C++\nenum class AbilityErrorCode {\n    ERROR_OK = 0,\n    ERROR_CODE_PERMISSION_DENIED = 201,\n    ERROR_CODE_NOT_SYSTEM_APP = 202,\n    ERROR_CODE_INVALID_PARAM = 401,\n    ERROR_CODE_CAPABILITY_NOT_SUPPORT = 801,\n};\n\n/**\n * @throws { BusinessError } 201 - Permission denied.\n * @throws { BusinessError } 401 - Parameter error.\n */\n```",
+        "bad case": "1、将系统通用错误码定义为其他业务语义。\n\n```C++\n/**\n * @throws { BusinessError } 401 - Device locked\n * @throws { BusinessError } 201 - Service busy\n */\n```\n\n2、使用自定义业务错误码重复表达系统通用错误语义。\n\n```C++\nconst ErrorCode = {\n    PERMISSION_DENIED: 100001,\n    PARAM_ERROR: 100002\n};\n```\n\n3、使用明确保留的错误码。\n\n```C++\n/**\n * @throws { BusinessError } 101 - Some custom error\n * @throws { BusinessError } 601 - Some custom error\n * @throws { BusinessError } 701 - Some custom error\n */\n```"
       },
-      "instructions": "检查返回值为数组的函数在正常空场景下是否返回空数组，而不是 null 或 undefined。需要筛选 Array<T>、T[]、Promise<Array<T>>、Promise<T[]> 等声明，并检查声明中是否错误包含 | null 或 | undefined，同时扫描实现中的空结果路径，确认返回的是 []、空 vector 或空数组对象。若数组结果在正常空场景下返回 null/undefined，或声明将数组类型定义为可空，则判定为违规。"
+      "instructions": "核心目标：保证系统通用错误码在全局范围内语义一致，避免业务层自行重解释、重复造码或滥用保留段。\n检查规则：\n   第一步：系统通用错误码提取\n      检查动作：扫描 .d.ts、.d.ets、.h、.ts、.ets、.c、.cpp 以及错误码常量定义文件。\n      判定逻辑：提取 100 到 999 范围内对开发者可见的错误码及其对应的 message、注释、说明文本。\n   第二步：语义篡改检查\n      检查动作：将已定义系统通用错误码的 message 与规范语义进行比对。\n      判定逻辑：若 201、202、401、801、804、901 等已知系统通用错误码被赋予明显不同的业务含义，则判定为不通过。\n   第三步：重复定义检查\n      检查动作：扫描大于 999 的业务自定义错误码及其说明。\n      判定逻辑：若业务自定义错误码所表达的语义与系统通用错误码完全相同，例如用 100001 表达权限失败，用 100002 表达参数数量或类型错误，则判定为不通过。\n   第四步：保留错误码检查\n      检查动作：检查 API 声明和实现中是否使用了明确保留的错误码段。\n      判定逻辑：对已标记为保留的 1XX 未定义项、6XX、7XX，若被业务直接对外使用，则判定为不通过。\n   第五步：违规判定\n      判定逻辑：存在语义篡改、重复定义系统通用语义、或使用保留错误码任一情况，均判定为不通过。\n   例外说明：仅在内部流转且不会对开发者暴露的错误码，不纳入本规则；若 message 只是翻译差异但核心语义一致，不直接判定为不通过。"
     },
     {
-      "id": "5.4.1.4",
-      "description": "通用错误码801用于设备不支持的场景",
+      "id": "APITEST.ERRORCODE.01.007",
+      "description": "和具体业务强相关的错误使用自定义错误码，检查自定义错误码是否由SysCap编号和自定义的5位错误编号组成",
       "example": {
-        "good case": "/**\n * Enables the Bluetooth adapter.\n * @throws { BusinessError } 801 - Capability not supported.\n */\nfunction enableBluetooth(): Promise<void>;",
-        "bad case": "/**\n * Obtains the Bluetooth adapter state.\n * @throws { BusinessError } 801 - Capability not supported.\n */\nfunction getState(): BluetoothState;"
+        "good case": "正确使用了 SysCap 编号加 5 位自定义序号的结构。\n\n```C++\ntypedef enum {\n    ABILITY_RUNTIME_ERROR_CODE_NO_SUCH_ABILITY = 16000001,\n    ABILITY_RUNTIME_ERROR_CODE_INCORRECT_ABILITY_TYPE = 16000002,\n    ABILITY_RUNTIME_ERROR_CODE_INTERNAL = 16000050,\n} AbilityRuntime_ErrorCode;\n\nenum {\n    ERR_BLOCK_START_FIRST_BOOT_SCREEN_UNLOCK = 20907253,\n    ERR_OPEN_LINK_START_ABILITY_DEFAULT_OK = 20907259,\n};\n```",
+        "bad case": "1、错误码无法映射到有效的 SysCap 编号。\n\n```C++\nenum {\n    ERR_STARTUP_DEPENDENCY_NOT_FOUND = 89900001,\n    ERR_STARTUP_CIRCULAR_DEPENDENCY = 89900002,\n}\n```\n\n2、使用无结构的魔数或十六进制魔数。\n\n```C++\nenum NativeFreeInstallError {\n    FREE_INSTALL_OK = 0,\n    FA_FREE_INSTALL_SERVICE_ERROR = 0x820101,\n    FA_CRASH = 0x820102,\n}\n```"
       },
-      "instructions": "检查 801 是否仅用于设备能力或硬件不支持的执行类接口。需要先识别 API 是否依赖相机、NFC、传感器、蓝牙、WiFi、定位、音频、电话等底层硬件能力，再区分查询类、监听类、UI 相关接口和执行类接口。查询类、监听类和 UI 相关接口不应声明 801，执行类接口在设备不支持时应考虑声明并真实返回 801。还需结合 syscap 覆盖范围与实现中的 throw、return、BusinessError、错误码映射逻辑综合判断。"
+      "instructions": "核心目标：保证对开发者暴露的业务自定义错误码具有稳定、可追溯的结构。\n检查规则：\n   第一步：自定义错误码识别\n      检查动作：提取所有对开发者可见且数值大于 999 的错误码。\n      判定逻辑：若错误码属于业务自定义错误码，则进入后续检查。\n   第二步：结构拆解检查\n      检查动作：对错误码按十进制进行拆解。\n      判定逻辑：必须满足 ErrorCode = SysCapId * 100000 + CustomSN，其中 SysCapId 为 1 到 5 位十进制整数，CustomSN 为 00001 到 99999。\n   第三步：SysCap 编号校验\n      检查动作：结合权威 SysCap 编号映射表检查高位 SysCapId 是否有效。\n      判定逻辑：若高位无法映射到有效 SysCap 编号，则判定为不通过。\n   第四步：序号校验\n      检查动作：检查低 5 位编号。\n      判定逻辑：低 5 位必须为有效十进制序号；若为十六进制魔数、无结构魔数或无法拆解为合法序号，则判定为不通过。\n   第五步：违规判定\n      判定逻辑：存在无效 SysCap 编号、无结构魔数、十六进制魔数、长度明显不合理等情况，均判定为不通过。\n   例外说明：若当前上下文缺少权威 SysCap 编号映射表，结果应标记为需人工复核，不能直接判定通过。"
     },
     {
-      "id": "5.1.11.11.1",
-      "description": "禁止创建空方法接口",
+      "id": "APITEST.ERRORCODE.01.008",
+      "description": "禁止使用非标准错误码，如将-1、1、null返回给开发者",
       "example": {
-        "good case": "",
-        "bad case": ""
+        "good case": "失败时通过标准错误对象或标准错误码表达。\n\n```C++\nif (!isSuccess) {\n    napi_throw(env, JsErrUtils::CreateJsError(env, 13900020, \"Disk full.\"));\n    return NapiGetUndefined(env);\n}\n```",
+        "bad case": "1、使用 -1 或 null 表达失败。\n\n```C++\nif (!isSuccess) {\n    return -1;\n}\n\nif (!isSuccess) {\n    return nullptr;\n}\n```\n\n2、Promise 或回调中使用空值或原始值表达失败。\n\n```C++\nreject(null);\nthrow -1;\nreturn false;\n```"
       },
-      "instructions": "禁止创建空方法接口。\n空方法 API 定义：\n方法 API 在所有场景都不能正常工作，或其部分参数在所有的场景下都无效。\n比如：提前预埋的方法无实现，资料里面标注暂不支持。\n公开的事件回调方法，只有系统应用可以正常回调，外部开发者可以订阅，但不会回调，也属于空接口。\n测试应对该方法能工作和不能工作的场景都需要验收，不能只测试成功/只测试失败的场景。\n例外场景：多设备场景在某个设备上不支持。"
+      "instructions": "核心目标：禁止用非标准返回值表达失败，确保开发者看到的是可解析、可分支处理的标准错误结果。\n检查规则：\n   第一步：失败路径识别\n      检查动作：分析对开发者可见 API 的所有失败分支，包括 return、throw、Promise.reject、callback(err, data) 等。\n      判定逻辑：若失败路径存在，则进入后续检查。\n   第二步：非法返回值扫描\n      检查动作：扫描失败分支中是否直接返回 -1、1、0、false、null、undefined、nullptr 或其他原始值。\n      判定逻辑：若这些值被用来表示失败，则判定为不通过。\n   第三步：文档约定检查\n      检查动作：检查接口声明中是否写有“失败时返回 -1”“失败时返回 null”等约定。\n      判定逻辑：若文档将非标准值作为失败结果的一部分，则判定为不通过。\n   第四步：布尔返回值边界检查\n      检查动作：区分状态查询接口与执行类接口。\n      判定逻辑：对 isSupported、isEnabled 这类状态查询接口，返回 true 或 false 属于正常语义；对执行类接口，若用 false 表示操作失败，则判定为不通过。\n   第五步：违规判定\n      判定逻辑：失败路径使用非标准值表达错误，或文档约定非标准值为失败结果，均判定为不通过。"
     },
     {
-      "id": "5.1.11.11.2",
-      "description": "禁止创建空枚举/常量",
+      "id": "APITEST.ERRORCODE.01.009",
+      "description": "不同语言相同功能的接口错误码定义应保持一致",
       "example": {
-        "good case": "enum class UserStatus { ACTIVE, SUSPENDED }; ... if (status == UserStatus::SUSPENDED) { ... }",
-        "bad case": "枚举值 UserStatus::SUSPENDED 已定义，但在整个代码库中从未被任何代码引用。"
+        "good case": "ArkTS 与 C 接口对于相同功能都将权限失败定义为 201，将参数错误定义为 401。\n\n```C++\n// ArkTS\n/**\n * @throws { BusinessError } 201 - Permission denied.\n * @throws { BusinessError } 401 - Parameter error.\n */\nfunction getContact(id: string): Contact;\n\n// C\n/**\n * @return 201 Permission denied.\n * @return 401 Parameter error.\n */\nint GetContact(char* id, Contact* contact);\n```",
+        "bad case": "相同功能的跨语言接口使用了不同错误码或不同语义。\n\n```C++\n// ArkTS\n/**\n * @throws { BusinessError } 1001 - Permission denied.\n * @throws { BusinessError } 1002 - Invalid parameters.\n */\nfunction getContact(id: string): Contact;\n\n// C\n/**\n * @return 201 Permission denied.\n * @return 401 Parameter error.\n */\nint GetContact(char* id, Contact* contact);\n```"
       },
-      "instructions": "检查枚举值或常量在全仓范围内是否存在定义后从未被引用的情况。需要扫描 C/C++、TypeScript、ArkTS 中的枚举与常量定义，再进行全仓引用分析，支持命名空间限定、嵌套类枚举以及 C++20 using enum 等访问方式。若某枚举值或常量全仓没有任何引用，则判定为违规。"
+      "instructions": "核心目标：确保相同功能在不同语言接口上的错误码表现一致，避免一侧返回标准业务码，另一侧透传底层错误或使用不同语义。\n检查规则：\n   第一步：跨语言接口映射识别\n      检查动作：优先读取权威 API 映射表；若没有映射表，则结合名称、参数、功能描述、适配层调用关系推断 ArkTS/ETS 与 C/NDK 的镜像接口。\n      判定逻辑：若能建立较高置信度的跨语言映射，则进入后续检查；若无法可靠建立映射，结果应标记为需人工复核。\n   第二步：文档定义对齐检查\n      检查动作：比对两侧声明文件中的错误码集合及其说明。\n      判定逻辑：相同功能的接口，对相同错误场景应使用相同数值，核心语义也应一致。\n   第三步：适配层转换检查\n      检查动作：检查 NAPI 或其他适配层中的错误码转换逻辑。\n      判定逻辑：若底层返回 errno、内部错误码或原生错误值，适配层应将其归一化为对开发者可见的标准错误码。\n   第四步：违规判定\n      判定逻辑：跨语言镜像接口在同一错误场景下返回不同数值、不同核心语义，或一侧直接透传底层错误，均判定为不通过。"
     },
     {
-      "id": "5.4.1.5",
-      "description": "804 API不支持模拟器使用804通用错误码",
+      "id": "APITEST.ERRORCODE.01.010",
+      "description": "检查API的响应字段名是否一致（如code、message），ArkTs 语言正向要求是抛出 BusinessError对象，包含必选字段code和message，不会出现错误码字段缺失",
       "example": {
-        "good case": "错误信息明确写明：当前能力依赖真机 NFC 硬件，模拟器环境不支持，因此返回 804。",
-        "bad case": "仅返回 804，错误说明为 not supported，未说明为何模拟器不支持。"
+        "good case": "开发者可见的错误对象统一使用 code 和 message 字段。\n\n```C++\nreject({ code: 201, message: \"Permission denied.\" });\n```",
+        "bad case": "使用了非标准字段名，或缺少 code、message 中的任一必选字段。\n\n```C++\nreject({ errCode: 201, msg: \"Permission denied.\" });\nreject({ errorCode: 401, reason: \"Parameter error.\" });\nreject({ code: 401 });\nreject({ message: \"Parameter error.\" });\n```"
       },
-      "instructions": "检查 API 在模拟器不支持场景下是否使用 804 通用错误码，并清晰说明具体原因。需要审查文档、头文件注释或错误码说明中是否明确给出 804 的触发条件，说明是否指出模拟器缺失的硬件、驱动或虚拟化能力。若只给出模糊描述而未解释具体原因，则判定为违规。"
+      "instructions": "核心目标：确保开发者可见的错误对象结构统一，便于稳定使用 err.code 和 err.message 进行分支处理。\n检查规则：\n   第一步：错误对象识别\n      检查动作：扫描 ArkTS/ETS 侧对开发者可见的错误对象构造、Promise.reject 参数、callback(err, data) 中的 err 对象。\n      判定逻辑：若接口存在对象化错误返回，则进入后续检查。\n   第二步：字段名检查\n      检查动作：提取错误对象中的全部键名。\n      判定逻辑：错误码字段必须使用 code，错误消息字段必须使用 message。\n   第三步：必选字段完整性检查\n      检查动作：检查错误对象中 code 和 message 两个字段是否同时存在。\n      判定逻辑：若缺少任一字段，则判定为不通过。\n   第四步：违规字段识别\n      检查动作：检查是否出现 errorCode、errCode、status、errno、msg、errorMsg、reason、info 等替代字段。\n      判定逻辑：若这些字段被用于对开发者表达标准错误对象，则判定为不通过。\n   第五步：边界限定\n      判定逻辑：仅检查“错误对象”语义，不检查普通业务回调参数或已废弃接口中的非错误对象参数命名。\n   第六步：违规判定\n      判定逻辑：开发者可见错误对象未使用 code 和 message 标准字段，或缺少必选字段，均判定为不通过。"
     },
     {
-      "id": "5.4.5",
-      "description": "不同语言相同功能接口错误码定义应保持一致",
+      "id": "APITEST.ERRORCODE.01.011",
+      "description": "检查API的错误码code类型是否为number，没有出现返回其他类型",
       "example": {
-        "good case": "同一功能的 C 接口、C++ 接口和 TS 接口在权限不足场景下都返回 201，错误语义保持一致。",
-        "bad case": "TS 层对“设备不支持”返回 801，但 Native 层对同一场景返回底层 errno 28 或自定义 -1。"
+        "good case": "最终暴露给开发者的错误对象中，code 字段为 number。\n\n```C++\ntask.Reject(env, CreateJsError(env, 401, \"Parameter error.\"));\n```",
+        "bad case": "1、最终可见的 code 为字符串。\n\n```C++\nreject({ code: \"401\", message: \"Parameter error.\" });\n```\n\n2、最终可见的 code 为布尔值或对象。\n\n```C++\nreject({ code: true, message: \"Error occurred\" });\nreject({ code: { value: 201 }, message: \"Error occurred\" });\n```"
       },
-      "instructions": "检查不同语言中相同功能接口的错误码定义、数值和语义是否一致。需要对照 .h、.d.ts、.cpp、.c、.ts 等文件，确认同一功能接口在 C、C++、TS、JS 等实现中，对相同错误场景是否返回相同的错误码，并检查跨 NAPI 或 ANI 桥接层后的最终返回是否一致。若出现同码不同义、同义不同码、某语言遗漏定义，或直接透传底层 errno 而未做统一映射，则判定为违规。"
+      "instructions": "核心目标：确保开发者最终拿到的 err.code 可作为数值进行稳定比较。\n检查规则：\n   第一步：类型定义检查\n      检查动作：扫描 BusinessError 或等价错误对象的类型定义。\n      判定逻辑：code 字段应定义为 number。\n   第二步：对象构造检查\n      检查动作：检查 Promise.reject、throw、callback(err, data) 中错误对象对 code 的赋值。\n      判定逻辑：最终对开发者可见的 code 必须为 number，不能是 string、boolean、object，也不能是 string | number、any 等不稳定类型。\n   第三步：适配层检查\n      检查动作：若 code 来源于 Native 层，检查最终构造到 JS 错误对象时的 code 类型。\n      判定逻辑：检查对象最终落到 ArkTS/JS 侧后的类型，不以原始 napi_throw_error 的入参形式作为唯一判定依据。\n   第四步：违规判定\n      判定逻辑：开发者最终可见的错误对象中，code 可能为非 number 类型时，判定为不通过。\n   例外说明：若当前上下文无法确认 Native 层到 JS 层的最终对象构造逻辑，结果应标记为需人工复核。"
+    },
+    {
+      "id": "APITEST.ERRORCODE.02.001",
+      "description": "检查API返回的错误码与触发错误码的错误原因是否一致，没有出现如参数错误返回无权限错误码",
+      "example": {
+        "good case": "参数错误返回 401，权限失败返回 201，设备能力不支持返回 801。\n\n```C++\nbool result = AppExecFwk::UnwrapWantParams(env, info.argv[0], params);\nif (!result) {\n    ThrowError(env, 401, \"Parameter error.\");\n    return CreateJsUndefined(env);\n}\n```",
+        "bad case": "当参数或对象为空时，返回了不对应的内部错误或权限错误。\n\n```C++\nif (proxy_ == nullptr || hostProxy_ == nullptr) {\n    ThrowError(env, 201, \"Permission denied.\");\n    return CreateJsUndefined(env);\n}\n```"
+      },
+      "instructions": "核心目标：确保错误码与错误根因一致，开发者可根据 code 直接进入正确的排障方向。\n检查规则：\n   第一步：失败根因识别\n      检查动作：分析实现中的失败分支，识别其根因属于参数校验、权限校验、非系统应用调用系统 API、设备能力不支持、模拟器不支持、平台不支持或其他业务错误。\n   第二步：标准类别映射\n      判定逻辑：参数错误应对应 401，权限失败应对应 201，非系统应用调用系统 API 应对应 202，设备能力不支持应对应 801，模拟器不支持应对应 804，平台不支持应对应 901。\n   第三步：实际返回比对\n      检查动作：检查该分支最终向开发者返回的 code 与 message。\n      判定逻辑：若 code 与根因类别不一致，或 message 与 code 所属语义冲突，则判定为不通过。\n   第四步：违规判定\n      判定逻辑：存在参数错误返回权限码、权限失败返回参数码、设备不支持返回参数码等因果错位情况，均判定为不通过。"
+    },
+    {
+      "id": "APITEST.ERRORCODE.02.002",
+      "description": "检查是否出现错误码一对多场景，如一个错误码对应多个业务场景，错误信息未细分具体业务场景和上下文，如：请检查输入、\"Internal Error\"、\"Operation Failed\"、参数错误、“System internal error”等错误信息未指出具体错误原因",
+      "example": {
+        "good case": "同样是参数错误，但 message 中明确指出了具体参数名和失败原因。\n\n```C++\nnapi_throw_error(env, \"401\", \"Parse param want failed, want must be Want.\");\nnapi_throw_error(env, \"401\", \"Parse param connectId failed, connectId must be number.\");\n```",
+        "bad case": "1、多个不同的业务失败场景都映射到同一个错误码，且 message 完全相同。\n\n```C++\nconst std::map<int, int> INTERNAL_ERR_CODE_MAP = {\n    { ERR_GET_HAP_INFO_FAILED, ERROR_CODE_INNER },\n    { ERR_FORK_FAILED, ERROR_CODE_INNER },\n    { ERR_GET_BUNDLE_INFO_FAILED, ERROR_CODE_INNER },\n};\n```\n\n2、直接使用模糊错误信息。\n\n```C++\nnapi_throw_error(env, \"10108601\", \"Internal error\");\nnapi_throw_error(env, \"10108501\", \"Operation failed\");\n```"
+      },
+      "instructions": "核心目标：避免“一码多义”和模糊 message 让开发者无法判断真实失败原因。\n检查规则：\n   第一步：错误码复用扫描\n      检查动作：统计同一 API 或同一模块中相同错误码对应的所有失败分支。\n      判定逻辑：若同一错误码被多个本质不同的失败原因复用，则进入上下文细分检查。\n   第二步：上下文细分检查\n      检查动作：检查这些分支对应的 message 是否包含参数名、资源名、状态名、原因描述等具体上下文。\n      判定逻辑：若相同错误码在不同场景下具有足够区分度的 message，则可视为通过；若 message 相同或同样模糊，则判定为不通过。\n   第三步：模糊 message 拦截\n      检查动作：扫描是否使用 Internal error、System internal error、Operation failed、Failed、Unknown error 等模糊文本。\n      判定逻辑：若 message 仅为此类模糊文本且没有进一步上下文说明，则判定为不通过。\n   第四步：违规判定\n      判定逻辑：多个本质不同场景共用同一 code 且 message 未细分，或直接使用模糊 message，均判定为不通过。"
+    },
+    {
+      "id": "APITEST.ERRORCODE.02.003",
+      "description": "检查API的异常分支是否返回了错误码和错误信息，不会出现直接返回空或非错误结构、错误信息字段为空等情况，或者出现只返回undefined场景没有抛异常",
+      "example": {
+        "good case": "所有失败路径都通过标准错误对象或标准错误码返回，并且 message 非空。\n\n```C++\nif (!userId) {\n    napi_throw_error(env, \"401\", \"User ID cannot be empty\");\n    return NapiGetUndefined(env);\n}\n```",
+        "bad case": "1、失败时直接返回 undefined。\n\n```C++\nif (ctx == nullptr) {\n    return NapiGetUndefined(env);\n}\n```\n\n2、失败时直接返回空指针。\n\n```C++\nif (innerModel == nullptr) {\n    return nullptr;\n}\n```\n\n3、错误码为空或 message 为空。\n\n```C++\nnapi_throw_error(env, nullptr, \"napi_get_reference_value fail\");\nnapi_throw_error(env, \"401\", \"\");\n```"
+      },
+      "instructions": "核心目标：消除静默失败，确保每个失败路径都向开发者返回完整的错误信息。\n检查规则：\n   第一步：失败路径枚举\n      检查动作：遍历开发者可见 API 的全部失败分支，包括 return、throw、reject、callback(err, data) 等。\n   第二步：标准错误结构检查\n      检查动作：检查失败路径是否抛出或返回标准错误对象、标准错误码或标准错误返回结构。\n      判定逻辑：若失败路径仅返回 undefined、nullptr、空对象、普通值或无参数 reject，则判定为不通过。\n   第三步：字段完备性检查\n      检查动作：检查错误结果中 code 和 message 的存在性与有效性。\n      判定逻辑：若 code 缺失、为空，或 message 为空字符串、全空白、null，则判定为不通过。\n   第四步：违规判定\n      判定逻辑：存在静默失败、空错误码、空 message 或无标准错误结果的失败路径，均判定为不通过。\n   例外说明：若当前函数只是内部 helper，且上层调用方会统一转换成标准错误返回，则不直接判定；若无法确认是否会统一转换，结果应标记为需人工复核。"
+    },
+    {
+      "id": "APITEST.ERRORCODE.02.004",
+      "description": "检查API对应的JS Doc与错误码代码实现是否一致，没有出现初始上线时编写遗漏、写错或JS Doc更新滞后导致的描述与实际不符",
+      "example": {
+        "good case": "接口文档中声明的错误码集合与实现中可能对开发者暴露的错误码集合一致。",
+        "bad case": "实现中会返回 801，但声明文档中未写 801；或文档写的是 401，实现实际返回的是 201。"
+      },
+      "instructions": "核心目标：保证 API 文档与实现对错误码的描述保持一致，避免开发者看到的资料与实际行为不符。\n检查规则：\n   第一步：文档集合提取\n      检查动作：提取 .d.ts、.d.ets、.h 中该 API 的 @throws、@return 错误码说明；若项目存在公共通用错误码文档，也一并纳入。\n   第二步：实现集合提取\n      检查动作：扫描实现中所有可能向开发者暴露的失败分支，提取最终返回的错误码集合及其核心语义。\n   第三步：一致性比对\n      判定逻辑：文档集合应覆盖实现集合；相同错误码在文档与实现中的语义应一致。\n   第四步：违规判定\n      判定逻辑：实现中存在对外暴露的错误码但文档未声明，或文档中声明的数值与实现不一致，或文档语义与实现根因明显冲突，均判定为不通过。\n   例外说明：若某些通用错误码由公共文档统一说明，允许与单接口文档合并后再进行比对；若无法建立完整调用链或无法确定代码所属版本，结果应标记为需人工复核。"
+    },
+    {
+      "id": "APITEST.ERRORCODE.03.001",
+      "description": "检查API返回的错误信息，message需要能帮助开发者定位和解决问题",
+      "example": {
+        "good case": "错误信息包含具体参数、约束或修复建议。\n\n```C++\nnapi_throw_error(env, \"401\", \"The 'radius' parameter must be in range [0, 100], but got -5.\");\nnapi_throw_error(env, \"2300005\", \"Network request failed. Please ensure the network is connected and the domain is whitelisted.\");\n```",
+        "bad case": "错误信息仅包含模糊描述。\n\n```C++\nnapi_throw_error(env, \"401\", \"Internal error\");\nnapi_throw_error(env, \"402\", \"Operation failed\");\nnapi_throw_error(env, \"403\", \"System error\");\nnapi_throw_error(env, \"404\", \"Parameter error\");\n```"
+      },
+      "instructions": "核心目标：使错误信息能够帮助开发者快速定位和修复问题，而不是仅作为失败占位文本。\n检查规则：\n   第一步：message 提取\n      检查动作：扫描所有对开发者可见的 message 文本，包括同步异常、异步 reject、回调 err.message 以及 C API 错误描述缓冲区中的文本。\n   第二步：最小定位信息检查\n      判定逻辑：\n         1. 参数错误场景，message 应尽量包含具体参数名、类型、范围、期望格式或实际值；\n         2. 资源错误场景，message 应尽量包含路径、ID、名称等对象标识；\n         3. 权限错误场景，message 应尽量包含缺失权限名或权限类别；\n         4. 环境错误场景，message 应说明设备、模拟器、平台等限制原因。\n   第三步：模糊文本拦截\n      检查动作：扫描是否仅使用 Internal error、Operation failed、System error、Parameter error 等泛化占位词。\n      判定逻辑：若 message 只有这类模糊文本且无补充上下文，则判定为不通过。\n   第四步：修复建议检查\n      检查动作：检查 message 中是否包含开发者可执行的下一步建议。\n      判定逻辑：存在具体修复建议属于加分项；若错误信息完全无法指导开发者定位，则判定为不通过。\n   第五步：违规判定\n      判定逻辑：错误信息缺少最基本的定位信息，或仅为泛化占位文本，均判定为不通过。"
+    },
+    {
+      "id": "APITEST.ERRORCODE.03.002",
+      "description": "检查API参考文档中错误码是否有处理步骤且可有效解决问题",
+      "example": {
+        "good case": "参考文档中针对某个错误码给出了具体排查步骤，例如声明权限、检查授权状态、调用 canIUse 探测能力、检查网络配置等。",
+        "bad case": "参考文档中的处理步骤仅写“请联系系统管理员”“请提单解决”“请检查参数”，没有任何可执行信息。"
+      },
+      "instructions": "核心目标：让参考文档真正具备自助排障价值，帮助开发者基于文档自行定位和解决问题。\n检查规则：\n   第一步：处理步骤提取\n      检查动作：扫描 API 参考文档中错误码表、FAQ、处理步骤、可能原因及建议等区域。\n   第二步：存在性检查\n      判定逻辑：每个对开发者可见的错误码都应有对应的处理步骤、建议、FAQ 或等价说明；若为空，则判定为不通过。\n   第三步：可执行性检查\n      检查动作：分析处理步骤是否能转化为开发者的实际动作，例如声明权限、检查配置、调用探测接口、修改参数格式、重试策略等。\n      判定逻辑：若处理步骤仅为“请联系支持”“请提单”“请检查参数”这类空泛表述，则判定为不通过。\n   第四步：原因匹配检查\n      检查动作：将处理步骤与错误码语义进行比对。\n      判定逻辑：若处理步骤与错误原因不匹配，例如网络超时却建议重启应用而没有检查网络步骤，则判定为不通过。\n   第五步：违规判定\n      判定逻辑：错误码缺少处理步骤，或处理步骤不可执行，或与错误原因不匹配，均判定为不通过。"
     }
   ]
 }

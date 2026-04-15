@@ -23,7 +23,7 @@ SCAN_KIT_SCRIPT: Path = Path(__file__).resolve().parent / "scan_kit.py"
 # 固定参数
 JS_DECL_PATH: str = "/Users/spongbob/for_guance/api_dfx/api/interface_sdk-js"
 REPO_BASE: str = "/Users/spongbob/for_guance/api_dfx/DataBases"
-OUT_PATH: str = "/Users/spongbob/for_guance/api_dfx_2.0/scan_out/scan-test_414"
+OUT_PATH: str = "/Users/spongbob/for_guance/api_dfx_2.0/scan_out/scan-test_415"
 DOC_PATH:str = "/Users/spongbob/for_guance/api_dfx_2.0/data/docs"
 
 def load_unique_kit_names(csv_path: Path) -> list[str]:
