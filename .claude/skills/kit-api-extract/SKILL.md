@@ -12,11 +12,12 @@ description: >
 
 ## 概述
 
-本技能从 HarmonyOS/OpenHarmony 的 Kit 声明文件出发，完成三步分析流程：
+本技能从 HarmonyOS/OpenHarmony 的 Kit 声明文件出发，完成四步分析流程：
 
 1. **提取 API** — 通过脚本从 Kit 聚合声明文件中提取所有方法类型的 API
-2. **深度实现探索** — 为每个模块派发 subagent，沿 NAPI→Framework→业务逻辑 4 层链路追踪每个 API 的完整实现
-3. **汇总输出** — 合并结果并更新映射模式知识库
+2. **结构关系抽取** — 通过脚本从部件仓中提取 bundle.json/BUILD.gn/nm_modname 的确定性映射关系
+3. **深度实现探索** — 为每个模块派发 subagent，利用映射表指导探索，沿 NAPI→Framework→业务逻辑 4 层链路追踪每个 API 的完整实现
+4. **汇总输出** — 合并结果并更新映射模式知识库
 
 ## 参数
 
@@ -61,11 +62,35 @@ python3 skills/kit-api-extract/scripts/extract_kit_api.py \
 ```json
 {"api_declaration":"function xxx(params): returnType","js_doc":"/** ... */","module_name":"@ohos.xxx","declaration_file":"api/@ohos.xxx.d.ts"}
 ```
-获取到脚本输出后即可开始进行下一步的 Agent 深度实现探索。
+获取到脚本输出后即可开始进行下一步的结构关系抽取。
 
-### Phase 2: Agent 深度实现探索
+### Phase 2: 结构关系抽取（确定性脚本）
 
-读取 `api.jsonl`，按 `module_name` 分组。
+运行关系抽取脚本，从部件仓中提取 bundle.json、BUILD.gn 和 nm_modname 的结构映射关系。
+
+```bash
+python3 skills/kit-api-extract/scripts/extract_component_map.py \
+  --kit "{kit_display_name}" \
+  --databases {databases_dir} \
+  --csv skills/api-level-scan/assets/kit_compont.csv \
+  -o {output_dir}/{kit_name}
+```
+
+输出: `{output_dir}/{kit_name}/component_map.json`
+
+**映射表内容**：
+- `components` — 每个部件的 bundle.json 元信息（subsystem、syscap、deps、fwk_group、inner_kits）
+- `build_targets` — BUILD.gn 中 ohos_shared_library/js_declaration 等目标的 sources、deps、relative_install_dir
+- `module_map` — `@ohos.X.Y` → nm_modname 入口文件路径 → 关联 BUILD.gn target 的确定性映射
+
+Agent 在后续 Phase 3 的探索中应优先查阅此映射表：
+- 通过 `module_map` 直接获取模块的 NAPI 入口文件路径，避免盲搜 nm_modname
+- 通过 `related_targets` 获取 BUILD.gn target 的 sources 列表，快速定位所有实现文件
+- 通过 `bundle.inner_kits` 获取 Framework 接口头文件列表
+
+### Phase 3: Agent 深度实现探索
+
+读取 `api.jsonl` 和 `component_map.json`，按 `module_name` 分组。
 **为每个模块(或多个少量api的模块合并)派发一个 Explore 类型的 subagent**，执行以下 6 步探索流程。
 **第i个 subagent 负责探索 module_name_i 下的所有 API**，并将结果以 JSONL 格式保存。
 **启动每个subagent时，汇总之前的探索关键发现**，以便新 subagent 可以参考并避免重复劳动。
@@ -79,13 +104,21 @@ python3 skills/kit-api-extract/scripts/extract_kit_api.py \
 该模块的声明文件为 {{declaration_file}}，仅针对以下 API：
 {{api_list}}
 
+**结构映射表（来自 Phase 2 脚本输出）**：
+{{module_map_entry}}
+（如果上面的映射表为空，则表示该模块未在 component_map.json 中找到 nm_modname 入口，需要自行搜索）
+
 请先读取 {{`reference/MAPPING_PATTERNS.md`的绝对路径}} 了解已知映射模式，然后严格按以下 6 步探索：
 
 Step 1 — 理解 API 接口定义：
 读取声明文件 {{declaration_file}}，理解每个 API 的函数签名、入参和返回类型。
 
 Step 2 — 定位 NAPI 映射层：
-在 DataBases/ 下搜索该模块的 NAPI 插件源码。搜索策略（按优先级）：
+**优先使用映射表**：如果映射表中已有该模块的 entry_file 和 related_targets，直接使用：
+1. 读取 entry_file（nm_modname 入口文件），找到注册函数（register_func）
+2. 从 related_targets 的 sources 列表中获取所有实现文件
+
+**如果映射表中无该模块**，在 DataBases/ 下搜索该模块的 NAPI 插件源码。搜索策略（按优先级）：
 1. 搜索 .nm_modname = "{{module_short_name}}" 定位模块注册入口（native_module.cpp）
 2. 在找到的目录中搜索已知映射模式（参考 {{`reference/MAPPING_PATTERNS.md`的绝对路径}} ）
 3. 若未找到，尝试以下非标准搜索：
@@ -132,7 +165,7 @@ Step 6 - 记录探索过程中的关键发现:
 - 对于 import 但仅 re-export 类型/接口（无函数方法）的模块，跳过
 - 对于 API 数量较少的模块（如 < 5 个 API），可合并到同一 subagent 中处理
 
-### Phase 3: 汇总输出
+### Phase 4: 汇总输出
 
 1. 收集所有 subagent 保存的结果,采用`scripts/merge_results.py`脚本将所有agent的结果合并到一个文件 `impl_api.jsonl` 中
 2. 写入 `impl_api.jsonl`，每行一个 JSON 对象:
@@ -167,9 +200,9 @@ Step 6 - 记录探索过程中的关键发现:
 
 3. **更新映射模式知识库**：检查探索过程中是否发现 `reference/MAPPING_PATTERNS.md` 中未记录的新映射模式，若有则按模板格式追加。
 
-### Phase 4: 重试机制（覆盖率 < 90% 时触发）
+### Phase 5: 重试机制（覆盖率 < 90% 时触发）
 
-**触发条件**：Phase 3 完成后，若 `NAPI_map_file` 覆盖率 < 90%，则自动触发重试。
+**触发条件**：Phase 4 完成后，若 `NAPI_map_file` 覆盖率 < 90%，则自动触发重试。
 
 **流程**：
 
@@ -202,7 +235,7 @@ API 列表: {api_list}
 
 **终止条件**：重试最多 2 轮。若 2 轮后仍 < 95%，报告剩余缺失 API 并说明原因。
 
-### Phase 5: 结果汇总
+### Phase 6: 结果汇总
 
 向用户报告：
 - 提取的 API 总数和分布（按模块）

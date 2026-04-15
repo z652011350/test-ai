@@ -110,6 +110,26 @@ python3 {{skill_path}}/scripts/extract_errorcode_docs.py "{{api_error_code_doc_p
 python3 {{skill_path}}/scripts/filter_rules.py "{{skill_path}}/config/rule.json" -o "{{out_path}}/api_scan/active_rules.json"
 ```
 
+**1.5** 声明层规则检查（脚本预处理，规则 01.001/01.002/01.003）：
+
+对 API 列表中的声明文件执行纯声明层 JSDoc 标签检查，将结果保存为预处理 findings，后续 agent 审计时不再处理这三条规则。
+
+```bash
+python3 {{skill_path}}/scripts/check_jsdoc_rules.py \
+  --js_sdk {js_sdk_path} \
+  --api_list {api_input} \
+  -o "{{out_path}}/api_scan"
+```
+
+输出: `{out_path}/api_scan/jsdoc_rule_findings.jsonl` 和 `{out_path}/api_scan/jsdoc_rule_findings.json`
+
+**脚本检查的规则**：
+- **01.001**：API 有 `@permission` 时，`@throws` 中必须声明 201
+- **01.002**：API 有 `@systemapi` 时，`@throws` 中必须声明 202
+- **01.003**：API 的 `@since >= 24` 时，`@throws` 中不应显式列出 401
+
+脚本仅输出 non-compliant 的记录，格式与 raw_findings.json 的 9 字段结构一致。
+
 ### Phase B：逐 API 审计
 
 #### Step 2. 解析输入
@@ -183,7 +203,7 @@ e) **标签缺失处理**
 
 **3.4 规则驱动审计**
 
-对 `active_rules.json` 中的每条规则，审计 API 的实现代码和声明：
+对 `active_rules.json` 中的每条规则（**跳过 01.001/01.002/01.003，这三条已由 Step 1.5 脚本预处理**），审计 API 的实现代码和声明：
 
 **规则前置条件检查（在审计每条规则前必须执行）**
 
@@ -191,9 +211,9 @@ e) **标签缺失处理**
 
 | 规则 ID | 前提条件 | 验证方法 |
 |---------|---------|---------|
-| 01.001 | API 的 JSDoc 中**确实存在** `@permission` 标签 | 从 3.3.1 步骤提取的标签中确认 |
-| 01.002 | API 的 JSDoc 中**确实存在** `@systemapi` 标签 | 从 3.3.1 步骤提取的标签中确认 |
-| 01.003 | API 的 JSDoc 中**最后一个** `@since` 的版本号 **>= 24** | 从 3.3.1 步骤提取的版本号确认 |
+| ~~01.001~~ | **已移至脚本预处理**（Step 1.5 `check_jsdoc_rules.py`） | Agent 不再处理 |
+| ~~01.002~~ | **已移至脚本预处理**（Step 1.5 `check_jsdoc_rules.py`） | Agent 不再处理 |
+| ~~01.003~~ | **已移至脚本预处理**（Step 1.5 `check_jsdoc_rules.py`） | Agent 不再处理 |
 | 01.004 | 需要 syscap 配置（暂用 API 的 @syscap 标签判断） | 从 JSDoc 提取 @syscap |
 | 01.005 | 代码中存在模拟器判断逻辑 | 扫描实现代码 |
 | 其他规则 | 无特殊前提条件 | — |
@@ -213,6 +233,23 @@ e) **标签缺失处理**
 - **记录调用链路径**：对每个发现的问题，记录从 NAPI 入口到问题位置的完整调用路径（如 `NAPI_PAGetWant->GetWant->Ability::GetWant`），写入 `finding_description`
 
 每个发现生成一个结构化 JSON 对象，**必须严格遵循以下 raw_findings.json 格式**。
+
+### Phase B 续：合并脚本预处理结果
+
+在 Step 3 所有 API 审计完成后，将 Step 1.5 脚本预处理的声明层 findings 与 agent 生成的 raw_findings 合并：
+
+1. 读取 `{out_path}/api_scan/jsdoc_rule_findings.json`（脚本预处理结果）
+2. 读取 `{out_path}/api_scan/raw_findings.json`（agent 审计结果，可能尚未生成）
+3. 将两者合并写入最终的 `raw_findings.json`：脚本 findings 追加到 agent findings 数组中
+4. 如果 `raw_findings.json` 尚不存在，直接以脚本 findings 作为初始内容
+
+**合并逻辑**（伪代码）：
+```
+agent_findings = read_json("raw_findings.json")["findings"] if exists else []
+jsdoc_findings = read_json("jsdoc_rule_findings.json")["findings"]
+merged = agent_findings + jsdoc_findings
+write_json("raw_findings.json", {"findings": merged})
+```
 
 ### Phase B 续：raw_findings.json 结构（严格遵守）
 
@@ -337,10 +374,8 @@ NAPI_PAGetWant->GetWant->Ability::GetWant
 - 检查 `severity_level` 是否为 `严重`/`高`/`中`/`低` 之一
 - 检查 `affected_error_codes` 是否为逗号分隔数字或空字符串
 - 检查所有 9 个必需字段（`rule_id`、`rule_description`、`finding_description`、`evidence`、`component`、`affected_apis`、`modification_suggestion`、`severity_level`、`affected_error_codes`）是否存在
-- **检查规则 01.001 的发现**：对应的 API JSDoc 中是否确实存在 `@permission` 标签（须从声明文件验证，不能从实现代码推断）
-- **检查规则 01.002 的发现**：对应的 API JSDoc 中是否确实存在 `@systemapi` 标签（须精确匹配当前审计的重载版本，不能混淆同名方法的不同重载）
-- **检查规则 01.003 的发现**：对应的 API 最后一个 `@since` 版本号是否确实 >= 24（`@since 23 static` 的版本号是 23，不是 24）
-- **检查 finding 中的 evidence**：对于标签类规则（01.001/01.002/01.003），evidence 中是否包含了声明文件（.d.ts/.d.ets）的证据，而非仅包含实现文件
+- **规则 01.001/01.002/01.003 的自校验已移除**：这三条规则的 findings 由 Step 1.5 脚本生成，格式已由脚本保证，无需 agent 重复校验
+- **检查 finding 中的 evidence**：agent 生成的 findings 中 evidence 必须包含实际代码文件的证据
 
 发现不符合要求的条目必须修正，随后才能进入分类验证。
 
@@ -444,13 +479,14 @@ python3 {{skill_path}}/scripts/validate_output.py "{{out_path}}/api_scan" --rule
 
 ## 执行顺序（严格按序）
 
-1. 规则加载 — `scripts/convert_xlsx_to_json.py`（若提供 rule_xlsx）→ `filter_rules.py`
+1. 规则加载 — `scripts/convert_xlsx_to_json.py`（若提供 rule_xlsx）→ `filter_rules.py` → `check_jsdoc_rules.py`（声明层预处理）
 2. 解析输入 — 逐行解析 JSONL，检测格式
-3. 逐 API 审计 — 读取声明文件提取 @kit → 定位实现 → 规则审计 → 调用链分析 → 错误码提取
-4. 自校验 — 检查 raw_findings.json 内容
-5. 分类验证 — `scripts/classify_findings.py`
-6. 生成输出 — JSONL + 调用链 JSON + 汇总报告
-7. 输出验证 — `scripts/validate_output.py`（必须执行）
+3. 逐 API 审计 — 读取声明文件提取 @kit → 定位实现 → 规则审计（跳过 01.001/01.002/01.003）→ 调用链分析 → 错误码提取
+4. 合并 — 将脚本预处理 findings 与 agent findings 合并到 raw_findings.json
+5. 自校验 — 检查 raw_findings.json 内容
+6. 分类验证 — `scripts/classify_findings.py`
+7. 生成输出 — JSONL + 调用链 JSON + 汇总报告
+8. 输出验证 — `scripts/validate_output.py`（必须执行）
 
 **任何步骤失败必须中止整个流程。**
 
@@ -467,6 +503,7 @@ python3 {{skill_path}}/scripts/validate_output.py "{{out_path}}/api_scan" --rule
 | `references/common_error_codes.md` | 通用错误码参考（201/202/203/401/801） |
 | `references/LESSONS_LEARNED.md` | 历史审计经验 |
 | `scripts/extract_errorcode_docs.py` | 提取 Kit 错误码文档（可选） |
+| `scripts/check_jsdoc_rules.py` | 声明层 JSDoc 规则预处理（01.001/01.002/01.003） |
 | `templates/api_scan_summary.md` | 汇总报告模板 |
 
 ---
@@ -480,7 +517,7 @@ python3 {{skill_path}}/scripts/validate_output.py "{{out_path}}/api_scan" --rule
 5. **调用链分析无深度限制**
 6. **影响的错误码** 必须是开发者通过 BusinessError.code 收到的数值错误码，不是原生层内部错误码
 7. **成功码（0）不是错误码**，在影响的错误码中排除
-8. 每个 API 必须审计 `active_rules.json` 中的所有规则
+8. 每个 API 必须审计 `active_rules.json` 中的所有规则（**01.001/01.002/01.003 除外，已由脚本预处理**）
 9. 所有发现必须包含 `修改建议` 和 `问题严重等级`
 10. 无发现的 API 不输出 JSONL 行，但仍包含在调用链 JSON 中
 11. 如果输入量较大（>20 个 API），每处理 10 个 API 将中间结果刷新到文件
