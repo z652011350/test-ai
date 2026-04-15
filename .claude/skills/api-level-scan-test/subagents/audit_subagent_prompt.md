@@ -55,7 +55,7 @@
 
 ### E. 规则驱动审计
 
-对 active_rules.json 中的每条规则，审计 API 的实现代码和声明：
+对 active_rules.json 中的每条规则（**跳过 01.001/01.002/01.003，这三条已由 Harness Step 1.4 脚本预处理**），审计 API 的实现代码和声明：
 
 - 读取实现函数体（错误处理分支、返回路径）
 - 读取声明文件中的 js_doc（`@throws`、`@permission`、`@systemapi`）

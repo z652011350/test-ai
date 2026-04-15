@@ -127,6 +127,7 @@ def build_scan_prompt(
     repo_base: Path,
     doc_path: str = "",
     kit_name: str = "",
+    js_sdk_path: str = "",
 ) -> str:
     """
     为单个 batch 构建 /api-level-scan 的 prompt。
@@ -140,6 +141,8 @@ def build_scan_prompt(
         f"out_path={batch_out_dir}\n"
 
     )
+    if js_sdk_path:
+        prompt += f"js_sdk_path={js_sdk_path}\n"
     if batch_out_dir.parent/'api_extraction_report.md' in batch_out_dir.parent.iterdir():
         prompt += "api_extraction_report_path={}\n".format(batch_out_dir.parent/'api_extraction_report.md')
         print(f"  [提示] 已存在 api_extraction_report.md，已将相关知识路径注入")

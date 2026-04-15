@@ -71,6 +71,7 @@ def build_scan_prompt(
     merged_input_path: str,
     repo_base: str,
     out_path: str,
+    js_sdk_path: str = "",
     max_parallel: int = 3,
     group_strategy: str = "auto",
     group_size: int = 80,
@@ -88,6 +89,8 @@ def build_scan_prompt(
         f"group_strategy={group_strategy}\n"
         f"group_size={group_size}"
     )
+    if js_sdk_path:
+        prompt += f"\njs_sdk_path={js_sdk_path}"
     if rule_xlsx:
         prompt += f"\nrule_xlsx={rule_xlsx}"
     if api_error_code_doc_path:
@@ -235,6 +238,7 @@ def main():
         merged_input_path=str(merged_path.resolve()),
         repo_base=str(repo_base),
         out_path=str(output_dir.resolve()),
+        js_sdk_path=str(js_decl_path.resolve()),
         max_parallel=args.max_parallel,
         group_strategy=args.group_strategy,
         group_size=args.group_size,

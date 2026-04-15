@@ -15,6 +15,7 @@ description: >
   "repo_base": "代码仓库基础目录（包含各部件仓库的根目录）",
   "rule_xlsx": "规则 XLSX 文件路径（可选，覆盖 config/rule.json）",
   "out_path": "输出目录",
+  "js_sdk_path": "JS SDK 声明文件目录（interface_sdk-js，用于声明层规则预处理）",
   "api_error_code_doc_path": "API 错误码文档开源仓根目录（可选，包含 zh-cn 目录）",
   "kit_name": "Kit 名称（可选，如 'Ability Kit'）"
 }
@@ -26,6 +27,7 @@ description: >
 | `repo_base` | 是 | 代码仓库基础目录，包含各 OpenHarmony 部件仓库 |
 | `rule_xlsx` | 否 | 规则 XLSX 文件，提供时先转换为 config/rule.json |
 | `out_path` | 是 | 输出目录，结果保存至 `out_path/api_scan/` |
+| `js_sdk_path` | 是 | JS SDK 声明文件目录（interface_sdk-js），用于 Step 1.5 声明层规则预处理 |
 | `api_error_code_doc_path` | 否 | API 错误码文档开源仓根目录（包含 zh-cn 目录），提供时提取错误码文档供审计参考 |
 | `kit_name` | 否 | Kit 名称（如 "Ability Kit"），与 `api_error_code_doc_path` 同时提供时提取该 Kit 的错误码文档 |
 

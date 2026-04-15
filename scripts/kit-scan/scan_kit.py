@@ -184,6 +184,7 @@ def main():
             batch_pipeline.build_scan_prompt,
             doc_path=args.doc_path,
             kit_name=kit_name,
+            js_sdk_path=str(js_decl_path.resolve()),
         )
         claude_runner.run_batch_scan(
             batch_paths, output_dir, repo_base, build_prompt
