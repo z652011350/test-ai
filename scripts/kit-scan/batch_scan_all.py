@@ -10,6 +10,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import batch_pipeline
+
 # ============================================================
 # 固定配置
 # ============================================================
@@ -23,7 +25,7 @@ SCAN_KIT_SCRIPT: Path = Path(__file__).resolve().parent / "scan_kit.py"
 # 固定参数
 JS_DECL_PATH: str = "/Users/spongbob/for_guance/api_dfx/api/interface_sdk-js"
 REPO_BASE: str = "/Users/spongbob/for_guance/api_dfx/DataBases"
-OUT_PATH: str = "/Users/spongbob/for_guance/api_dfx_2.0/scan_out/scan-test_415"
+OUT_PATH: str = "/Users/spongbob/for_guance/api_dfx_2.0/scan_out/scan-test_417"
 DOC_PATH:str = "/Users/spongbob/for_guance/api_dfx_2.0/data/docs"
 
 def load_unique_kit_names(csv_path: Path) -> list[str]:
@@ -134,6 +136,40 @@ def main():
 
     if args.dry_run:
         print(f"\n--dry-run 模式，共 {len(kits)} 条命令，未实际执行")
+    else:
+        # 汇总所有 Kit 的统计数据
+        print("\n" + "=" * 60)
+        print("生成全量汇总报表")
+        print("=" * 60)
+
+        out_root = Path(OUT_PATH)
+        stats_list = []
+        for kit_dir in sorted(out_root.iterdir()):
+            if not kit_dir.is_dir():
+                continue
+            if not (kit_dir / "api.jsonl").exists():
+                continue
+            kit_name = kit_dir.name
+            print(f"  统计: {kit_name}")
+            try:
+                stats = batch_pipeline.compute_kit_stats(kit_dir, kit_name)
+                stats_list.append(stats)
+            except Exception as e:
+                print(f"  [警告] {kit_name} 统计失败: {e}")
+
+        if stats_list:
+            batch_pipeline.write_summary_markdown(
+                stats_list,
+                out_root / "all_kits_summary.md",
+                title="全量 Kit 审计汇总报表",
+            )
+            batch_pipeline.write_summary_xlsx(
+                stats_list,
+                out_root / "all_kits_summary.xlsx",
+                title="全量 Kit 审计汇总报表",
+            )
+        else:
+            print("[提示] 无有效 Kit 数据，跳过全量汇总报表生成")
 
 
 if __name__ == "__main__":

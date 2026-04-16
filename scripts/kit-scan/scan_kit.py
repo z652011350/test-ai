@@ -83,7 +83,7 @@ def parse_args() -> argparse.Namespace:
         "-repo_base", required=True, help="DataBases 目录路径（包含各部件仓库）"
     )
     parser.add_argument(
-        "-batch_size", type=int, default=20, help="每个 batch 包含的 API 数量 (默认: 20)"
+        "-batch_size", type=int, default=30, help="每个 batch 包含的 API 数量 (默认: 30)"
     )
     parser.add_argument(
         "-skip_extract",
@@ -180,16 +180,16 @@ def main():
 
     # 执行批量审计
     try:
-        build_prompt = partial(
-            batch_pipeline.build_scan_prompt,
-            doc_path=args.doc_path,
-            kit_name=kit_name,
-            js_sdk_path=str(js_decl_path.resolve()),
-        )
-        claude_runner.run_batch_scan(
-            batch_paths, output_dir, repo_base, build_prompt
-        )
-        # pass
+        # build_prompt = partial(
+        #     batch_pipeline.build_scan_prompt,
+        #     doc_path=args.doc_path,
+        #     kit_name=kit_name,
+        #     js_sdk_path=str(js_decl_path.resolve()),
+        # )
+        # claude_runner.run_batch_scan(
+        #     batch_paths, output_dir, repo_base, build_prompt
+        # )
+        pass
     finally:
         # 合并结果（直接扫描 batch_result 目录）
         merged_path = output_dir / "batch_result" / "merged_api_scan_findings.jsonl"
@@ -199,6 +199,22 @@ def main():
         if merged_path.exists():
             xlsx_path = merged_path.with_suffix(".xlsx")
             batch_pipeline.jsonl_to_xlsx(merged_path, xlsx_path)
+        # Step 4: 生成 Kit 汇总报表
+        try:
+            stats = batch_pipeline.compute_kit_stats(output_dir, kit_name)
+            stats_list = [stats]
+            batch_pipeline.write_summary_markdown(
+                stats_list,
+                output_dir / f"{kit_name}_summary.md",
+                title=f"{kit_name} 审计汇总报表",
+            )
+            batch_pipeline.write_summary_xlsx(
+                stats_list,
+                output_dir / f"{kit_name}_summary.xlsx",
+                title=f"{kit_name} 审计汇总报表",
+            )
+        except Exception as e:
+            print(f"[警告] 汇总报表生成失败: {e}")
 
     print("\n" + "=" * 60)
     print("流水线执行完毕")

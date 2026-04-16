@@ -262,8 +262,30 @@ def check_rule_01_002(jsdoc_blocks, api_declaration, module_name, declaration_fi
     }
 
 
+def extract_since_suffix(since_raw):
+    """从 @since 原始值中提取版本号之后的后缀文本。
+
+    "24" → ""
+    "24 dynamic" → "dynamic"
+    "24 dynamic&static" → "dynamic&static"
+    "6.1.1(24)" → ""
+    "6.1.1(24) dynamic" → "dynamic"
+    "26.0.0 dynamic&static" → "dynamic&static"
+    "24 static" → "static"
+    """
+    if not since_raw:
+        return ''
+    # 剥离版本号部分：数字+点号（如 26.0.0）+ 可选括号格式（如 (24)）+ 前导空格
+    suffix = re.sub(r'^[\d.]+(\([^)]*\))?\s*', '', since_raw)
+    return suffix.strip()
+
+
+# 需要检查的后缀白名单（动态调度 API）
+_CHECKED_SUFFIXES = {'', 'dynamic', 'dynamic&static', 'dynamic@static'}
+
+
 def check_rule_01_003(jsdoc_blocks, api_declaration, module_name, declaration_file):
-    """规则 01.003: @since >= 24 时，@throws 中不应显式列出 401。"""
+    """规则 01.003: @since >= 24 且后缀为空/dynamic/dynamic&static 时，@throws 中不应显式列出 401。"""
     since_values = extract_all_tag_values(jsdoc_blocks, '@since')
     if not since_values:
         return None  # 无 @since 标签，规则不适用
@@ -275,6 +297,11 @@ def check_rule_01_003(jsdoc_blocks, api_declaration, module_name, declaration_fi
     if version < 24:
         return None  # 版本号 < 24，规则不适用
 
+    # 后缀白名单过滤：仅检查空后缀、dynamic、dynamic&static
+    suffix = extract_since_suffix(last_since)
+    if suffix not in _CHECKED_SUFFIXES:
+        return None  # 后缀不在白名单内（static、staticonly、dynamiconly 等），跳过
+
     throws_codes = extract_throws_codes(jsdoc_blocks)
     if '401' not in throws_codes:
         return None  # 合规
@@ -282,7 +309,7 @@ def check_rule_01_003(jsdoc_blocks, api_declaration, module_name, declaration_fi
     return {
         "rule_id": "APITEST.ERRORCODE.01.003",
         "rule_description": "当新增API（since 版本号大于或等于\"6.1.1(24)\"或\"24\"）时，检查是否定义了401错误码，如果出现了则不符合规范",
-        "finding_description": f"[声明层检查] API 的 @since 为 {version}（>= 24），但 @throws 中显式列出了 401 错误码，不符合规范。",
+        "finding_description": f"[声明层检查] API 的 @since 为 {last_since}（>= 24，后缀: {'无' if not suffix else suffix}），但 @throws 中显式列出了 401 错误码，不符合规范。",
         "evidence": [
             {"file": declaration_file, "line": 0, "snippet": f"@since {last_since} 版本 >= 24，@throws 中包含 401"}
         ],

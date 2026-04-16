@@ -241,3 +241,208 @@ def jsonl_to_xlsx(jsonl_path: Path, xlsx_path: Path) -> int:
     wb.save(str(xlsx_path))
     print(f"[batch_pipeline] XLSX 已生成: {xlsx_path} ({len(records)} 行)")
     return len(records)
+
+
+# ============================================================
+# 汇总报表生成
+# ============================================================
+
+def _normalize_decl(decl: str) -> str:
+    """标准化 API 声明：collapse 空格 + strip。"""
+    return ' '.join(decl.split())
+
+
+def compute_kit_stats(output_dir: Path, kit_name: str) -> Dict[str, Any]:
+    """计算单个 Kit 的所有统计指标。
+
+    Args:
+        output_dir: Kit 输出目录（包含 api.jsonl、impl_api.jsonl、batch_result/）
+        kit_name: Kit 名称（已标准化）
+
+    Returns:
+        包含所有报表列的字典。缺失数据时对应值为 None。
+    """
+    stats: Dict[str, Any] = {"kit_name": kit_name}
+
+    # --- api.jsonl ---
+    api_path = output_dir / "api.jsonl"
+    api_decls: set = set()
+    modules: set = set()
+
+    if api_path.exists():
+        with open(api_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                record = json.loads(line)
+                decl = record.get("api_declaration", "")
+                if decl:
+                    api_decls.add(_normalize_decl(decl))
+                mod = record.get("module_name", "")
+                if mod:
+                    modules.add(mod)
+
+    total_api_count = len(api_decls)
+    stats["total_api_count"] = total_api_count
+    stats["module_count"] = len(modules)
+
+    # --- impl_api.jsonl ---
+    # 按 api_declaration 去重，每条 API 只计一次
+    impl_path = output_dir / "impl_api.jsonl"
+    impl_repos: set = set()
+    impl_seen_decls: set = set()
+    napi_count = 0
+    impl_name_count = 0
+    fwk_decl_count = 0
+    impl_file_count = 0
+
+    if impl_path.exists():
+        with open(impl_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                record = json.loads(line)
+                repo = record.get("impl_repo_path", "")
+                if repo:
+                    impl_repos.add(repo)
+
+                # 按 api_declaration 去重，避免重复计数
+                decl = _normalize_decl(record.get("api_declaration", ""))
+                if not decl or decl in impl_seen_decls:
+                    continue
+                impl_seen_decls.add(decl)
+
+                if record.get("NAPI_map_file", ""):
+                    napi_count += 1
+                if record.get("impl_api_name", ""):
+                    impl_name_count += 1
+                if record.get("Framework_decl_file", ""):
+                    fwk_decl_count += 1
+                if record.get("impl_file_path", ""):
+                    impl_file_count += 1
+
+    stats["repo_count"] = len(impl_repos)
+
+    def _coverage(numerator: int, denominator: int) -> str:
+        if denominator == 0:
+            return "0.00%"
+        return f"{numerator / denominator * 100:.2f}%"
+
+    stats["napi_coverage"] = _coverage(napi_count, total_api_count)
+    stats["impl_name_coverage"] = _coverage(impl_name_count, total_api_count)
+    stats["fwk_decl_coverage"] = _coverage(fwk_decl_count, total_api_count)
+    stats["impl_file_coverage"] = _coverage(impl_file_count, total_api_count)
+
+    # --- 参与审计的 API 数 ---
+    batch_input_dir = output_dir / "batch_result" / "input"
+    audited_decls: set = set()
+    if batch_input_dir.exists():
+        for batch_file in sorted(batch_input_dir.glob("batch_*.jsonl")):
+            with open(batch_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    record = json.loads(line)
+                    decl = record.get("api_declaration", "")
+                    if decl:
+                        audited_decls.add(_normalize_decl(decl))
+        stats["audited_api_count"] = len(audited_decls)
+    else:
+        stats["audited_api_count"] = None
+
+    # --- 存在问题的 API 数 ---
+    findings_path = output_dir / "batch_result" / "merged_api_scan_findings.jsonl"
+    problem_decls: set = set()
+    if findings_path.exists():
+        with open(findings_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                record = json.loads(line)
+                decl = record.get("api声明", "")
+                if decl:
+                    problem_decls.add(_normalize_decl(decl))
+        stats["problem_api_count"] = len(problem_decls)
+    else:
+        stats["problem_api_count"] = None
+
+    return stats
+
+
+# 报表列定义（固定顺序）
+_SUMMARY_COLUMNS = [
+    ("kit_name", "Kit 名称"),
+    ("total_api_count", "总 API 数"),
+    ("module_count", "模块数"),
+    ("repo_count", "代码仓数"),
+    ("napi_coverage", "NAPI 覆盖率"),
+    ("impl_name_coverage", "实现函数名覆盖率"),
+    ("fwk_decl_coverage", "Framework 声明覆盖率"),
+    ("impl_file_coverage", "业务实现覆盖率"),
+    ("audited_api_count", "参与审计的 API 数"),
+    ("problem_api_count", "存在问题的 API 数"),
+]
+
+
+def write_summary_markdown(
+    stats_list: List[Dict[str, Any]],
+    output_path: Path,
+    title: str = "审计汇总报表",
+) -> None:
+    """将统计字典列表格式化为 Markdown 表格并写入文件。"""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    lines = [f"# {title}", ""]
+
+    # 表头
+    header = "| " + " | ".join(col_label for _, col_label in _SUMMARY_COLUMNS) + " |"
+    separator = "| " + " | ".join("---" for _ in _SUMMARY_COLUMNS) + " |"
+    lines.append(header)
+    lines.append(separator)
+
+    # 数据行
+    for stats in stats_list:
+        row_values = []
+        for col_key, _ in _SUMMARY_COLUMNS:
+            val = stats.get(col_key)
+            row_values.append(str(val) if val is not None else "N/A")
+        lines.append("| " + " | ".join(row_values) + " |")
+
+    lines.append("")
+    content = "\n".join(lines)
+    output_path.write_text(content, encoding="utf-8")
+    print(f"[batch_pipeline] Markdown 报表已生成: {output_path}")
+
+
+def write_summary_xlsx(
+    stats_list: List[Dict[str, Any]],
+    output_path: Path,
+    title: str = "审计汇总报表",
+) -> None:
+    """使用 openpyxl 生成固定列顺序的 XLSX 汇总表格。"""
+    from openpyxl import Workbook
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "汇总报表"
+
+    # 表头
+    headers = [col_label for _, col_label in _SUMMARY_COLUMNS]
+    ws.append(headers)
+
+    # 数据行
+    for stats in stats_list:
+        row = []
+        for col_key, _ in _SUMMARY_COLUMNS:
+            val = stats.get(col_key)
+            row.append(val if val is not None else "N/A")
+        ws.append(row)
+
+    wb.save(str(output_path))
+    print(f"[batch_pipeline] XLSX 报表已生成: {output_path} ({len(stats_list)} 行)")
