@@ -157,7 +157,22 @@ def main():
     # ========================================
     # Step 1: 调用 kit-api-extract 提取 API
     # ========================================
-    if not args.skip_extract:
+    api_path = output_dir / "api.jsonl"
+    impl_api_path = output_dir / "impl_api.jsonl"
+
+    # 自动检测：若输出目录已存在完整提取结果，则跳过
+    extract_done = (
+        api_path.exists()
+        and impl_api_path.exists()
+        and api_path.stat().st_size > 0
+        and impl_api_path.stat().st_size > 0
+    )
+
+    if extract_done:
+        print(f"\n[跳过] kit-api-extract — 检测到已有完整提取结果")
+        print(f"  api.jsonl: {api_path} ({api_path.stat().st_size} bytes)")
+        print(f"  impl_api.jsonl: {impl_api_path} ({impl_api_path.stat().st_size} bytes)")
+    elif not args.skip_extract:
         print("\n" + "=" * 60)
         print("Step 1: 调用 kit-api-extract 提取 API 数据")
         print("=" * 60)
@@ -181,7 +196,7 @@ def main():
             print(f"  api.jsonl: {api_path} ({'存在' if api_path.exists() else '不存在'})")
             print(f"  impl_api.jsonl: {impl_api_path} ({'存在' if impl_api_path.exists() else '不存在'})")
             sys.exit(1)
-    else:
+    elif args.skip_extract:
         print("\n[跳过] kit-api-extract 步骤 (-skip_extract)")
 
     # ========================================
