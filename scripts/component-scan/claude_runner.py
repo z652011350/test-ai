@@ -1,22 +1,21 @@
 """
-claude_runner.py - Component 扫描 Claude CLI 执行模块
+claude_runner.py - Component 扫描 Agent CLI 执行模块
 
-封装 subprocess 调用 Claude CLI，支持 audit-error-codes-new skill 调用、重试和指数退避。
+导入共享 runner 模块，保留 component-scan 独有的 build_skill_prompt 和 run_component_scan。
 """
 
-import subprocess
+import sys
 import time
-from typing import Dict, Tuple, Optional
+from pathlib import Path
+from typing import Dict, Tuple
 
-# Claude CLI 命令名
-CLAUDE_CLI: str = "claude"
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-# 允许的工具列表
-ALLOWED_TOOLS: str = "Bash,Read,Edit,Find,Wc,Write,Search,Python,Grep,Glob,Agent"
-
-# 重试配置
-DEFAULT_MAX_RETRIES: int = 3
-BASE_RETRY_DELAY: float = 10.0
+from common.runner import (
+    run_agent,
+    DEFAULT_MAX_RETRIES,
+    ALLOWED_TOOLS,
+)
 
 
 def build_skill_prompt(component_path: str,
@@ -48,86 +47,20 @@ def run_claude_command(prompt: str,
                        max_retries: int = DEFAULT_MAX_RETRIES,
                        label: str = "") -> Tuple[bool, str]:
     """
-    执行单次 Claude CLI 命令，支持失败重试和指数退避。
-
-    Args:
-        prompt: 完整 prompt 文本
-        max_retries: 最大重试次数
-        label: 日志标签（如部件名）
-
-    Returns:
-        (success, output)
+    执行 Agent CLI 命令，使用指数退避重试。
+    保留原有接口签名（含 label 参数），内部委托给共享 runner。
+    component-scan 使用 realtime_print=False 以避免并行扫描时输出交错，
+    stderr 截断到 200 字符。
     """
-    cmd = [
-        CLAUDE_CLI,
-        "-p",
-        prompt,
-        "--allowedTools",
-        ALLOWED_TOOLS,
-    ]
-
-    prefix = f"[{label}] " if label else ""
-
-    last_output = ""
-    for attempt in range(max_retries + 1):
-        try:
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                encoding="utf-8",
-                bufsize=0,
-            )
-
-            full_output: list = []
-            pid = process.pid
-            if attempt == 0:
-                print(f"{prefix}启动 claude 进程 PID: {pid}")
-            else:
-                print(f"{prefix}第 {attempt}/{max_retries} 次重试，PID: {pid}")
-
-            # 实时读取输出
-            while True:
-                line = process.stdout.readline()
-                if line:
-                    full_output.append(line)
-                if process.poll() is not None and not line:
-                    break
-
-            stderr = process.stderr.read().strip() if process.stderr else ""
-            if stderr:
-                print(f"{prefix}[stderr] {stderr[:200]}")
-
-            output = "".join(full_output)
-            if process.returncode != 0:
-                print(f"{prefix}claude 进程退出码: {process.returncode}")
-                last_output = output
-                if attempt < max_retries:
-                    delay = BASE_RETRY_DELAY * (2 ** attempt)
-                    print(f"{prefix}{delay:.0f}s 后重试...")
-                    time.sleep(delay)
-                    continue
-                return False, output
-
-            return True, output
-
-        except FileNotFoundError:
-            msg = "未找到 claude CLI，请确认已安装并添加到 PATH"
-            print(f"{prefix}[错误] {msg}")
-            return False, msg
-        except Exception as e:
-            msg = f"调用 claude 失败: {e}"
-            print(f"{prefix}[错误] {msg}")
-            last_output = msg
-            if attempt < max_retries:
-                delay = BASE_RETRY_DELAY * (2 ** attempt)
-                print(f"{prefix}{delay:.0f}s 后重试...")
-                time.sleep(delay)
-                continue
-            return False, msg
-
-    return False, last_output
+    return run_agent(
+        prompt=prompt,
+        backend="claude",
+        max_retries=max_retries,
+        retry_strategy="exponential",
+        label=label,
+        realtime_print=False,
+        stderr_limit=200,
+    )
 
 
 def run_component_scan(row: Dict[str, str],

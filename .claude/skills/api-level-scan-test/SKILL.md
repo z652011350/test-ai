@@ -4,7 +4,7 @@ description: >
   Harness 模式的 HarmonyOS/OpenHarmony API 规则驱动审计技能。
   将输入 API 列表按模块分组，通过并行 subagent 执行深度调用链审计，
   再由独立校验 subagent 合并结果并生成最终输出。
-  输入为 JSONL 格式的 API 列表（每行含声明、NAPI映射、Framework接口、实现路径等 8 个字段）。
+  输入为 JSONL 格式的 API 列表（每行含声明、NAPI映射、Framework接口、实现路径等 9 个字段，含 `api_type` 区分 JS/C API）。
   当用户提供 JSONL 格式的 API 列表并需要对每个 API 逐个进行规范性审计、错误码检查、调用链分析时使用。
   触发场景包括：API 级别审计、单个 API 错码检查、调用链分析、API 规范性扫描、API level scan。
 ---
@@ -49,30 +49,37 @@ description: >
 
 ## 输入格式
 
-每行一个 JSON 对象，包含 8 个字段：
+每行一个 JSON 对象，包含 9 个字段：
 
-**格式1**
+**格式1 — JS API（api_type="js"）**
 ```json
-{"api_declaration": "function setController(controller: WindowAnimationController): void", "module_name": "@ohos.animation.windowAnimationManager", "js doc": "/**\n xxx */","impl_api_name": "RSWindowAnimationManager::SetController", "impl_repo_path": "graphic_graphic_2d", "declaration_file": "api/@ohos.animation.windowAnimationManager.d.ts", "NAPI_map_file": "graphic_graphic_2d/interfaces/kits/napi/graphic/animation/window_animation_manager/rs_window_animation_manager.cpp", "Framework_decl_file": "graphic_graphic_2d/rosen/modules/animation/window_animation/include/rs_window_animation_stub.h", "impl_file_path": "graphic_graphic_2d/interfaces/kits/napi/graphic/animation/window_animation_manager/rs_window_animation_manager.cpp"}
+{"api_declaration": "function setController(controller: WindowAnimationController): void", "module_name": "@ohos.animation.windowAnimationManager", "js doc": "/**\n xxx */","api_type": "js","impl_api_name": "RSWindowAnimationManager::SetController", "impl_repo_path": "graphic_graphic_2d", "declaration_file": "api/@ohos.animation.windowAnimationManager.d.ts", "NAPI_map_file": "graphic_graphic_2d/interfaces/kits/napi/graphic/animation/window_animation_manager/rs_window_animation_manager.cpp", "Framework_decl_file": "graphic_graphic_2d/rosen/modules/animation/window_animation/include/rs_window_animation_stub.h", "impl_file_path": "graphic_graphic_2d/interfaces/kits/napi/graphic/animation/window_animation_manager/rs_window_animation_manager.cpp"}
 ```
+
+**格式1C — C API（api_type="c"）**
+```json
+{"api_declaration": "OH_CryptoDigest_Create(CryptoDigest_Params *params, CryptoDigest **ctx)", "module_name": "CryptoArchitectureKit.crypto_digest", "js_doc": "/** ... */", "api_type": "c", "impl_api_name": "", "impl_repo_path": "base_crypto", "declaration_file": "CryptoArchitectureKit/crypto_digest.h", "NAPI_map_file": "", "Framework_decl_file": "", "impl_file_path": "base_crypto/crypto/frameworks/common/openssl/crypto_digest.c"}
+```
+> C API 的 `NAPI_map_file` 和 `impl_api_name` 始终为空（无 NAPI 层）。
 
 **格式2**
 对于部分未能在前期直接找到映射的api，则采用以下格式
 ```json
-{"api_declaration": "function getWant(callback: AsyncCallback<Want>): void", "js_doc": "/**\n....*/", "module_name": "@ohos.ability.featureAbility", "declaration_file": "api/@ohos.ability.featureAbility.d.ts"}
+{"api_declaration": "function getWant(callback: AsyncCallback<Want>): void", "js_doc": "/**\n....*/", "module_name": "@ohos.ability.featureAbility", "api_type": "js", "declaration_file": "api/@ohos.ability.featureAbility.d.ts"}
 ```
 对于这些未能找到映射的api，请设定一个subagent，参考/kit-api-extract的技能说明找到对应的api映射，仅要求 subagent输出impl_api.jsonl即可
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `api_declaration` | string | API 声明（完整函数签名，来自 .d.ts/.d.ets） |
-| `module_name` | string | 模块名（如 `@ohos.animation.windowAnimationManager`） |
-| `impl_api_name` | string | 实现函数名（NAPI 映射的 C++ 函数名） |
+| `api_declaration` | string | API 声明（完整函数签名，来自 .d.ts/.d.ets/.h） |
+| `module_name` | string | 模块名（JS: `@ohos.animation.windowAnimationManager`，C: `CryptoArchitectureKit.crypto_digest`） |
+| `api_type` | string | API 类型：`"js"` 或 `"c"`。**C API 跳过 NAPI 层分析和 JSDoc 规则检查（01.001/01.002/01.003）** |
+| `impl_api_name` | string | 实现函数名（NAPI 映射的 C++ 函数名，C API 为空） |
 | `impl_repo_path` | string | 仓库名（仅 repo_name，如 `graphic_graphic_2d`） |
-| `declaration_file` | string | API 声明文件路径（.d.ts / .d.ets） |
-| `NAPI_map_file` | string | NAPI 映射文件路径（C++ NAPI 插件源码，含 JS 方法名到 C++ 函数的映射关系） |
+| `declaration_file` | string | API 声明文件路径（.d.ts / .d.ets / .h） |
+| `NAPI_map_file` | string | NAPI 映射文件路径（C++ NAPI 插件源码，含 JS 方法名到 C++ 函数的映射关系，C API 为空） |
 | `Framework_decl_file` | string | Framework 接口声明文件路径（.h 头文件，定义 IPC 接口） |
-| `impl_file_path` | string | 业务逻辑实现文件完整路径（.cpp） |
+| `impl_file_path` | string | 业务逻辑实现文件完整路径（.cpp / .c） |
 
 这些字段对应完整的代码路径分析流程：
 1. **interface**（`declaration_file`）：暴露给应用层的函数签名、入参和返回类型
@@ -131,6 +138,8 @@ python3 {{skill_path}}/scripts/check_jsdoc_rules.py \
 - **01.003**：API 的 `@since >= 24` 时，`@throws` 中不应显式列出 401
 
 脚本仅输出 non-compliant 的记录，格式与 raw_findings.json 的 9 字段结构一致。
+
+**注意**：`api_type="c"` 的 API 记录会被脚本自动跳过（C API 使用 Doxygen 注释而非 JSDoc，不适用这三条规则）。
 
 ---
 

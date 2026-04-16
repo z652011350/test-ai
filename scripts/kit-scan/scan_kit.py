@@ -3,8 +3,7 @@ scan_kit.py - Kit 级 API 审计流水线入口
 
 完整流水线：
   Step 1: 调用 Claude CLI 使用 kit-api-extract 技能提取 Kit API 数据
-  Step 2: 按批次调用 Claude CLI 使用 api-level-scan 技能进行审计
-  Step 3: 合并审计结果
+  Step 2: 按批次调用 Claude CLI 使用 api-level-scan 技能进行审计（已注释）
 
 用法:
   python scan_kit.py -kit 'Ability Kit' -out_path 'path/to/out' \
@@ -13,46 +12,18 @@ scan_kit.py - Kit 级 API 审计流水线入口
 
 import argparse
 import sys
-from functools import partial
 from pathlib import Path
 
-import batch_pipeline
 import claude_runner
 
-
-def normalize_kit_name(raw_name: str) -> str:
-    """
-    标准化 Kit 名称。
-    "Ability Kit" -> "AbilityKit"
-    "AbilityKit" -> "AbilityKit" (幂等)
-    """
-    return raw_name.replace(" ", "")
-
-
-def resolve_kit_file(kit_name: str, js_sdk_path: Path) -> Path:
-    """
-    查找 Kit 声明文件，依次尝试 .d.ts / .d.ets / .static.d.ets。
-
-    Raises:
-        FileNotFoundError: 所有扩展名均未找到
-    """
-    candidates = [
-        js_sdk_path / "kits" / f"@kit.{kit_name}.d.ts",
-        js_sdk_path / "kits" / f"@kit.{kit_name}.d.ets",
-        js_sdk_path / "kits" / f"@kit.{kit_name}.static.d.ets",
-    ]
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-
-    raise FileNotFoundError(
-        f"找不到 Kit 声明文件: @kit.{kit_name}.d.ts/.d.ets\n"
-        f"已搜索: {[str(c) for c in candidates]}"
-    )
+# 跨目录导入
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from common.kit_utils import normalize_kit_name, resolve_kit_file
 
 
 def build_extract_prompt(
-    kit_name: str, js_sdk_path: str, repo_base: str, output_dir: str
+    kit_name: str, js_sdk_path: str, repo_base: str, output_dir: str,
+    c_sdk_path: str = ""
 ) -> str:
     """生成 kit-api-extract 技能的 prompt。"""
     prompt = (
@@ -62,6 +33,8 @@ def build_extract_prompt(
         f"databases_dir = {repo_base}\n"
         f"output_dir = {output_dir}"
     )
+    if c_sdk_path:
+        prompt += f"\nc_sdk_path = {c_sdk_path}"
     return prompt
 
 
@@ -83,7 +56,7 @@ def parse_args() -> argparse.Namespace:
         "-repo_base", required=True, help="DataBases 目录路径（包含各部件仓库）"
     )
     parser.add_argument(
-        "-batch_size", type=int, default=30, help="每个 batch 包含的 API 数量 (默认: 30)"
+        "-batch_size", type=int, default=40, help="每个 batch 包含的 API 数量 (默认: 40)"
     )
     parser.add_argument(
         "-skip_extract",
@@ -94,6 +67,11 @@ def parse_args() -> argparse.Namespace:
         "-doc_path",
         default="",
         help="API 错误码文档目录路径（可选）",
+    )
+    parser.add_argument(
+        "-c_decl_path",
+        default="",
+        help="interface_sdk_c 目录路径（可选，提供时启用 C API 提取）",
     )
     return parser.parse_args()
 
@@ -110,10 +88,13 @@ def main():
     output_dir = Path(args.out_path) / kit_name
     js_decl_path = Path(args.js_decl_path)
     repo_base = Path(args.repo_base).resolve()
+    c_decl_path = Path(args.c_decl_path) if args.c_decl_path else None
 
     print(f"\nKit: {kit_name}")
     print(f"输出目录: {output_dir}")
     print(f"SDK 路径: {js_decl_path}")
+    if c_decl_path:
+        print(f"C SDK 路径: {c_decl_path}")
     print(f"仓库基础: {repo_base}")
     print(f"Batch 大小: {args.batch_size}")
 
@@ -130,9 +111,10 @@ def main():
         print("=" * 60)
 
         output_dir.mkdir(parents=True, exist_ok=True)
-        
+
         prompt = build_extract_prompt(
-            kit_name, str(js_decl_path), str(repo_base), str(output_dir)
+            kit_name, str(js_decl_path), str(repo_base), str(output_dir),
+            c_sdk_path=str(c_decl_path) if c_decl_path else ""
         )
 
         success, _ = claude_runner.run_claude_command(prompt)
@@ -150,71 +132,6 @@ def main():
             sys.exit(1)
     else:
         print("\n[跳过] kit-api-extract 步骤 (-skip_extract)")
-
-    # ========================================
-    # Step 2: 批量审计
-    # ========================================
-    print("\n" + "=" * 60)
-    print("Step 2: 批量 API 审计")
-    print("=" * 60)
-
-    api_path = output_dir / "api.jsonl"
-    impl_api_path = output_dir / "impl_api.jsonl"
-
-    if not api_path.exists():
-        print(f"[错误] 缺少 api.jsonl ")
-        sys.exit(1)
-    if not impl_api_path.exists():
-        print(f"[错误] 缺少 impl_api.jsonl")
-        sys.exit(1)
-    # 加载数据并分批
-    empty_impl, non_empty_impl = batch_pipeline.load_and_split_impl_api(impl_api_path)
-    matched_api = batch_pipeline.load_matching_api_data(api_path, empty_impl)
-    batch_paths = batch_pipeline.prepare_batches(
-        non_empty_impl, matched_api, args.batch_size, output_dir
-    )
-
-    if not batch_paths:
-        print("[警告] 没有数据需要处理")
-        sys.exit(0)
-
-    # 执行批量审计
-    try:
-        # build_prompt = partial(
-        #     batch_pipeline.build_scan_prompt,
-        #     doc_path=args.doc_path,
-        #     kit_name=kit_name,
-        #     js_sdk_path=str(js_decl_path.resolve()),
-        # )
-        # claude_runner.run_batch_scan(
-        #     batch_paths, output_dir, repo_base, build_prompt
-        # )
-        pass
-    finally:
-        # 合并结果（直接扫描 batch_result 目录）
-        merged_path = output_dir / "batch_result" / "merged_api_scan_findings.jsonl"
-        batch_pipeline.merge_batch_results(output_dir, merged_path)
-
-        # 将合并结果转为 XLSX
-        if merged_path.exists():
-            xlsx_path = merged_path.with_suffix(".xlsx")
-            batch_pipeline.jsonl_to_xlsx(merged_path, xlsx_path)
-        # Step 4: 生成 Kit 汇总报表
-        try:
-            stats = batch_pipeline.compute_kit_stats(output_dir, kit_name)
-            stats_list = [stats]
-            batch_pipeline.write_summary_markdown(
-                stats_list,
-                output_dir / f"{kit_name}_summary.md",
-                title=f"{kit_name} 审计汇总报表",
-            )
-            batch_pipeline.write_summary_xlsx(
-                stats_list,
-                output_dir / f"{kit_name}_summary.xlsx",
-                title=f"{kit_name} 审计汇总报表",
-            )
-        except Exception as e:
-            print(f"[警告] 汇总报表生成失败: {e}")
 
     print("\n" + "=" * 60)
     print("流水线执行完毕")

@@ -1,21 +1,9 @@
 kit,component
-Ability Kit,ability_ability_runtime
-Ability Kit,ability_dmsfwk
-Ability Kit,bundlemanager_bundle_framework
-Ability Kit,security_access_token
 Accessibility Kit,accessibility
 Ads Kit,advertising_ads_framework
 Ads Kit,advertising_oaid
-ArkData,distributeddatamgr_data_share
-ArkData,distributeddatamgr_kv_store
-ArkData,distributeddatamgr_preferences
-ArkData,distributeddatamgr_relational_store
-ArkData,distributeddatamgr_udmf
 ArkGraphics 2D,graphic_graphic_2d
 ArkGraphics 3D,graphic_graphic_3d
-ArkTS,arkcompiler_ets_runtime
-ArkUI,arkui_ace_engine
-ArkUI,window_window_manager
 ArkWeb,web_webview
 Asset Store Kit,security_asset
 Audio Kit,multimedia_audio_framework
@@ -82,3 +70,15 @@ Telephony Kit,telephony_state_registry
 Test Kit,testfwk_arkxtest
 Universal Keystore Kit,security_huks
 User Authentication Kit,useriam_face_auth
+Ability Kit,ability_ability_runtime
+Ability Kit,ability_dmsfwk
+Ability Kit,bundlemanager_bundle_framework
+Ability Kit,security_access_token
+ArkData,distributeddatamgr_data_share
+ArkData,distributeddatamgr_kv_store
+ArkData,distributeddatamgr_preferences
+ArkData,distributeddatamgr_relational_store
+ArkData,distributeddatamgr_udmf
+ArkTS,arkcompiler_ets_runtime
+ArkUI,arkui_ace_engine
+ArkUI,window_window_manager

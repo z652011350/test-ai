@@ -14,11 +14,19 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Tuple
 
+import sys
+from pathlib import Path
+
+# 跨目录导入
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from common.config import load_config, find_config_file
+
 from claude_runner import run_component_scan
 from result_collector import collect_and_summarize
 
-# 默认路径
-DEFAULT_REPO_BASE = "/Users/spongbob/for_guance/api_dfx/DataBases"
+# 从配置文件加载默认路径
+_config = load_config(find_config_file(Path(__file__).resolve().parent))
+DEFAULT_REPO_BASE = _config.get("repo_base", "/Users/spongbob/for_guance/api_dfx/DataBases")
 DEFAULT_OUT_BASE = "./scan_results"
 
 

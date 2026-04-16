@@ -7,7 +7,11 @@ gen_csv.py - 从 kit_compont.csv 生成 components.csv
 
 import argparse
 import csv
+import sys
 from pathlib import Path
+
+# 跨目录导入
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
 def generate_csv(kit_mapping_path: Path,
@@ -78,7 +82,10 @@ def main():
     )
     parser.add_argument(
         "-kit_mapping",
-        default="/Users/spongbob/for_guance/api_dfx_2.0/scripts/kit-scan/kit_compont.csv",
+        default=str(
+            Path(__file__).resolve().parent.parent.parent
+            / ".claude" / "skills" / "api-level-scan" / "assets" / "kit_compont.csv"
+        ),
         help="kit_compont.csv 路径",
     )
     parser.add_argument(

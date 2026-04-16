@@ -21,40 +21,15 @@ from pathlib import Path
 import data_prepare
 import claude_runner
 
-
-def normalize_kit_name(raw_name: str) -> str:
-    """
-    标准化 Kit 名称。
-    "Ability Kit" -> "AbilityKit"
-    "AbilityKit" -> "AbilityKit" (幂等)
-    """
-    return raw_name.replace(" ", "")
-
-
-def resolve_kit_file(kit_name: str, js_sdk_path: Path) -> Path:
-    """
-    查找 Kit 声明文件，依次尝试 .d.ts / .d.ets / .static.d.ets。
-
-    Raises:
-        FileNotFoundError: 所有扩展名均未找到
-    """
-    candidates = [
-        js_sdk_path / "kits" / f"@kit.{kit_name}.d.ts",
-        js_sdk_path / "kits" / f"@kit.{kit_name}.d.ets",
-        js_sdk_path / "kits" / f"@kit.{kit_name}.static.d.ets",
-    ]
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-
-    raise FileNotFoundError(
-        f"找不到 Kit 声明文件: @kit.{kit_name}.d.ts/.d.ets\n"
-        f"已搜索: {[str(c) for c in candidates]}"
-    )
+# 跨目录导入
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from common.kit_utils import normalize_kit_name, resolve_kit_file
+from common.data_utils import jsonl_to_xlsx
 
 
 def build_extract_prompt(
-    kit_name: str, js_sdk_path: str, repo_base: str, output_dir: str
+    kit_name: str, js_sdk_path: str, repo_base: str, output_dir: str,
+    c_sdk_path: str = ""
 ) -> str:
     """生成 kit-api-extract 技能的 prompt。"""
     prompt = (
@@ -64,6 +39,8 @@ def build_extract_prompt(
         f"databases_dir = {repo_base}\n"
         f"output_dir = {output_dir}"
     )
+    if c_sdk_path:
+        prompt += f"\nc_sdk_path = {c_sdk_path}"
     return prompt
 
 
@@ -115,7 +92,7 @@ def parse_args() -> argparse.Namespace:
         "-js_decl_path", required=True, help="interface_sdk-js 目录路径"
     )
     parser.add_argument(
-        "-repo_base", required=True, help="DataBases 目录路径（包含各部件仓库）"
+        "-repo_base", required=True, help="DataBases 目录路径（包括各部件仓库）"
     )
     parser.add_argument(
         "-max_parallel", type=int, default=3,
@@ -142,6 +119,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="跳过 kit-api-extract 步骤（已有 api.jsonl 和 impl_api.jsonl 时使用）",
     )
+    parser.add_argument(
+        "-c_decl_path",
+        default="",
+        help="interface_sdk_c 目录路径（可选，提供时启用 C API 提取）",
+    )
     return parser.parse_args()
 
 
@@ -157,10 +139,13 @@ def main():
     output_dir = Path(args.out_path) / kit_name
     js_decl_path = Path(args.js_decl_path)
     repo_base = Path(args.repo_base).resolve()
+    c_decl_path = Path(args.c_decl_path) if args.c_decl_path else None
 
     print(f"\nKit: {kit_name}")
     print(f"输出目录: {output_dir}")
     print(f"SDK 路径: {js_decl_path}")
+    if c_decl_path:
+        print(f"C SDK 路径: {c_decl_path}")
     print(f"仓库基础: {repo_base}")
     print(f"分组策略: {args.group_strategy} (group_size={args.group_size})")
     print(f"并行度: {args.max_parallel}")
@@ -179,7 +164,8 @@ def main():
 
         output_dir.mkdir(parents=True, exist_ok=True)
         prompt = build_extract_prompt(
-            kit_name, str(js_decl_path), str(repo_base), str(output_dir)
+            kit_name, str(js_decl_path), str(repo_base), str(output_dir),
+            c_sdk_path=str(c_decl_path) if c_decl_path else ""
         )
         print(f"\n[提示] 执行 kit-api-extract，prompt:\n{prompt}\n")
         success, _ = claude_runner.run_claude_command(prompt)
@@ -275,7 +261,7 @@ def main():
 
     if findings_path.exists():
         xlsx_path = findings_path.with_suffix(".xlsx")
-        data_prepare.jsonl_to_xlsx(findings_path, xlsx_path)
+        jsonl_to_xlsx(findings_path, xlsx_path)
     else:
         print("[跳过] 审计结果文件不存在，跳过 XLSX 转换")
 

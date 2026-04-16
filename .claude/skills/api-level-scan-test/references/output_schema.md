@@ -62,9 +62,10 @@ raw_findings.affected_apis[0]        → JSONL.受影响的api
 raw_findings.modification_suggestion → JSONL.修改建议
 raw_findings.severity_level          → JSONL.问题严重等级
 raw_findings.affected_error_codes    → JSONL.影响的错误码
-+ 声明文件 @kit 标签                  → JSONL.kit
++ 声明文件 @kit 标签                  → JSONL.kit（JS: JSDoc @kit，C: Doxygen @kit）
 + api_declaration                     → JSONL.api声明
 + declaration_file (仅文件名)          → JSONL.声明文件位置
++ api_type                            → 内部使用（JS API 走 NAPI 链路，C API 跳过 NAPI 层）
 ```
 
 **代码文件/代码行位置转换规则**：
@@ -126,7 +127,7 @@ interface CallChainDocument {
   api_name: string;              // API 名称
   api_declaration: string;       // 完整方法签名
   module_name: string;           // 模块名（如 @ohos.ability.featureAbility）
-  napi_entry: string;            // NAPI 注册声明（如 DECLARE_NAPI_FUNCTION("getWant", NAPI_PAGetWant)）
+  napi_entry: string;            // JS API: NAPI 注册声明（如 DECLARE_NAPI_FUNCTION("getWant", NAPI_PAGetWant)）；C API: 空字符串
   implementation: {              // 实现入口信息，未找到时为 null
     function_name: string;       // 实现函数名（如 NAPI_PAGetWant）
     file: string;                // 实现文件相对路径

@@ -379,6 +379,10 @@ def main():
         module_name = api_entry.get('module_name', '')
         declaration_file = api_entry.get('declaration_file', '')
 
+        # 跳过 C API（C API 使用 Doxygen 注释，不适用 JSDoc 规则）
+        if api_entry.get('api_type') == 'c':
+            continue
+
         if not api_declaration or not declaration_file:
             continue
 
@@ -424,7 +428,11 @@ def main():
             if finding:
                 # 补充 component 字段
                 impl_repo = api_entry.get('impl_repo_path', '')
-                finding['component'] = impl_repo if impl_repo else module_name.replace('@ohos.', '').replace('.', '_')
+                if impl_repo:
+                    finding['component'] = impl_repo
+                else:
+                    # JS API: @ohos.xxx.yyy → xxx_yyy
+                    finding['component'] = module_name.replace('@ohos.', '').replace('.', '_')
                 findings.append(finding)
 
     # 输出

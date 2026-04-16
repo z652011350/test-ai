@@ -5,49 +5,40 @@ batch_scan_all.py - 批量遍历所有 Kit 调用 scan_kit.py
 python3 /Users/spongbob/for_guance/api_dfx_2.0/scripts/kit-scan/batch_scan_all.py -kits "Ability" -doc_path /Users/spongbob/for_guance/api_dfx_2.0/data/docs -skip_extract
 """
 
-import csv
 import subprocess
 import sys
 from pathlib import Path
 
 import batch_pipeline
 
+# 跨目录导入
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from common.kit_utils import load_unique_kit_names
+from common.config import load_config, find_config_file
+
 # ============================================================
-# 固定配置
+# 路径配置 - 优先从配置文件读取，否则使用默认值
 # ============================================================
 
-# kit_compont.csv 路径
-CSV_PATH: Path = Path(__file__).resolve().parent  / "kit_compont.csv"
+# kit_compont.csv 权威路径
+CSV_PATH: Path = (
+    Path(__file__).resolve().parent.parent / "assets" / "kit_compont.csv"
+)
 
 # scan_kit.py 路径（同目录下）
 SCAN_KIT_SCRIPT: Path = Path(__file__).resolve().parent / "scan_kit.py"
 
-# 固定参数
-JS_DECL_PATH: str = "/Users/spongbob/for_guance/api_dfx/api/interface_sdk-js"
-REPO_BASE: str = "/Users/spongbob/for_guance/api_dfx/DataBases"
-OUT_PATH: str = "/Users/spongbob/for_guance/api_dfx_2.0/scan_out/scan-test_417"
-DOC_PATH:str = "/Users/spongbob/for_guance/api_dfx_2.0/data/docs"
+# 加载配置
+_config = load_config(find_config_file(Path(__file__).resolve().parent))
 
-def load_unique_kit_names(csv_path: Path) -> list[str]:
-    """从 CSV 中提取去重且保持顺序的 kit 名称列表。"""
-    kits: list[str] = []
-    seen: set[str] = set()
-
-    with open(csv_path, "r", encoding="utf-8") as f:
-        reader = csv.reader(f)
-        next(reader)  # 跳过表头 kit,component
-        for row in reader:
-            if not row:
-                continue
-            kit = row[0].strip()
-            if kit and kit not in seen:
-                seen.add(kit)
-                kits.append(kit)
-
-    return kits
+JS_DECL_PATH: str = _config.get("js_decl_path", "/Users/spongbob/for_guance/api_dfx/api/interface_sdk-js")
+C_DECL_PATH: str = _config.get("c_decl_path", "")
+REPO_BASE: str = _config.get("repo_base", "/Users/spongbob/for_guance/api_dfx/DataBases")
+OUT_PATH: str = _config.get("out_path", "/Users/spongbob/for_guance/api_dfx_2.0/scan_out/scan-test_417")
+DOC_PATH: str = _config.get("doc_path", "/Users/spongbob/for_guance/api_dfx_2.0/data/docs")
 
 
-def build_command(kit_name: str, skip_extract: bool = False, doc_path: str = "") -> list[str]:
+def build_command(kit_name: str, skip_extract: bool = False, doc_path: str = "", c_decl_path: str = "") -> list[str]:
     """构建单个 Kit 的 scan_kit.py 命令。"""
     cmd = [
         sys.executable,
@@ -61,6 +52,8 @@ def build_command(kit_name: str, skip_extract: bool = False, doc_path: str = "")
         cmd.append("-skip_extract")
     if doc_path:
         cmd.extend(["-doc_path", doc_path])
+    if c_decl_path:
+        cmd.extend(["-c_decl_path", c_decl_path])
     return cmd
 
 
@@ -95,6 +88,8 @@ def check_paths():
         errors.append(f"scan_kit.py 不存在: {SCAN_KIT_SCRIPT}")
     if not Path(JS_DECL_PATH).exists():
         errors.append(f"SDK 声明目录不存在: {JS_DECL_PATH}")
+    if C_DECL_PATH and not Path(C_DECL_PATH).exists():
+        print(f"[警告] C SDK 声明目录不存在: {C_DECL_PATH}（将跳过 C API 提取）")
     if not Path(REPO_BASE).exists():
         errors.append(f"仓库基础目录不存在: {REPO_BASE}")
 
@@ -119,7 +114,7 @@ def main():
         print(f"共发现 {len(kits)} 个 Kit\n")
 
     for i, kit in enumerate(kits, 1):
-        cmd = build_command(kit, args.skip_extract, args.doc_path)
+        cmd = build_command(kit, args.skip_extract, args.doc_path, C_DECL_PATH)
         cmd_str = " ".join(cmd)
 
         if args.dry_run:

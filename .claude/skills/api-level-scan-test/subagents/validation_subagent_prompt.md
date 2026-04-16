@@ -91,6 +91,8 @@ python3 {{skill_path}}/scripts/classify_findings.py "{{batch_output_dir}}/raw_fi
 
 注意：`kit`、`api声明`、`声明文件位置` 三个字段需要从分组输入文件（`{{out_path}}/api_scan/groups/group_{i}.jsonl`）中查找对应的 API 记录来获取。通过 `affected_apis` 和 `component` 交叉匹配。
 
+**C API 处理**：当 `api_type="c"` 时，`kit` 从声明文件（`.h`）头部的 Doxygen `@kit` 标签提取；`api声明` 来自 C 函数签名（如 `OH_CryptoDigest_Create(...)`）；`声明文件位置` 为 `.h` 文件名。
+
 每行格式：
 ```json
 {"kit":"AbilityKit","部件":"ability_ability_runtime","编号":"APITEST.ERRORCODE.02.003","问题描述":"...","发现详情说明":"[调用链 ...]...","代码文件":"file.cpp","代码行位置":"196","受影响的api":"getWant","api声明":"function getWant(...): void","声明文件位置":"@ohos.ability.featureActivity.d.ts","修改建议":"...","问题严重等级":"严重","影响的错误码":"201,13900020"}

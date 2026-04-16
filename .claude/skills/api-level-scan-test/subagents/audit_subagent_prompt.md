@@ -30,14 +30,16 @@
 
 如果声明文件中无 `@kit` 标签，则 `kit` 为空字符串。
 
-`部件`（component）取 `impl_repo_path` 的值。如果 `impl_repo_path` 为空，从 `module_name` 推导（去除 `@ohos.` 前缀，将 `.` 替换为 `_`）。
+`部件`（component）取 `impl_repo_path` 的值。如果 `impl_repo_path` 为空，从 `module_name` 推导：
+- JS API（`api_type="js"` 或无 `api_type` 字段）：去除 `@ohos.` 前缀，将 `.` 替换为 `_`
+- C API（`api_type="c"`）：去除 `@ohos.` 前缀和 Kit 前缀段（如 `CryptoArchitectureKit.`），将剩余 `.` 替换为 `_`
 
 ### B. 定位实现代码
 
-输入已提供完整的代码路径，直接使用：
+输入已提供完整的代码路径，直接使用。**注意根据 `api_type` 字段分流处理**：
 
-- **NAPI 映射层**：`{{repo_base}}/{NAPI_map_file}` — 包含 JS 方法名到 C++ 函数的映射。直接读取，找到 `impl_api_name` 对应的函数入口。
-- **业务逻辑实现**：`{{repo_base}}/{impl_file_path}` — 具体业务逻辑代码。直接读取 `impl_api_name` 函数实现。
+- **NAPI 映射层**（仅 `api_type="js"`）：`{{repo_base}}/{NAPI_map_file}` — 包含 JS 方法名到 C++ 函数的映射。直接读取，找到 `impl_api_name` 对应的函数入口。**C API（`api_type="c"`）的 `NAPI_map_file` 为空，跳过此层。**
+- **业务逻辑实现**：`{{repo_base}}/{impl_file_path}` — 具体业务逻辑代码。直接读取 `impl_api_name` 函数实现（JS API）或 OH_* 函数实现（C API）。
 - **Framework 接口声明**：`{{repo_base}}/{Framework_decl_file}` — IPC Proxy/Stub 接口定义。用于理解跨进程调用链路和错误码传递。
 - 如果 `Framework_decl_file` 为空：跳过 Framework 层分析。
 
@@ -65,9 +67,13 @@
 
 ### F. 调用链分析（限制 2 层）
 
-从 NAPI 实现入口点开始，追踪外部业务逻辑函数调用，**最多 2 层**：
+从实现入口点开始，追踪外部业务逻辑函数调用，**最多 2 层**：
 
-- **Level 1**：NAPI 入口函数直接调用的外部业务逻辑函数
+**入口点按 api_type 分流**：
+- **JS API（`api_type="js"` 或无 `api_type`）**：NAPI 入口函数（如 `NAPI_PAGetWant`）
+- **C API（`api_type="c"`）**：OH_* 函数本身（如 `OH_CryptoDigest_Create`）
+
+- **Level 1**：入口函数直接调用的外部业务逻辑函数
 - **Level 2**：Level 1 函数调用的外部业务逻辑函数
 - **不追踪** Level 2 的进一步调用
 

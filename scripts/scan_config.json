@@ -1,0 +1,13 @@
+{
+  "backend": "claude",
+  "max_retries": 3,
+  "base_retry_delay": 10.0,
+  "retry_strategy": "exponential",
+  "batch_size": 30,
+  "max_parallel": 3,
+  "js_decl_path": "/Users/spongbob/for_guance/api_dfx/api/interface_sdk-js",
+  "c_decl_path": "/Users/spongbob/for_guance/api_dfx/api/interface_sdk_c",
+  "repo_base": "/Users/spongbob/for_guance/api_dfx/DataBases",
+  "out_path": "/Users/spongbob/for_guance/api_dfx_2.0/scan_out/test_417",
+  "doc_path": "/Users/spongbob/for_guance/api_dfx_2.0/data/docs"
+}
