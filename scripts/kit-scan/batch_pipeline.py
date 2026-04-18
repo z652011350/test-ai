@@ -149,33 +149,11 @@ def compute_kit_stats(output_dir: Path, kit_name: str) -> Dict[str, Any]:
     """计算单个 Kit 的所有统计指标。"""
     stats: Dict[str, Any] = {"kit_name": kit_name}
 
-    # --- api.jsonl ---
-    api_path = output_dir / "api.jsonl"
-    api_decls: set = set()
-    modules: set = set()
-
-    if api_path.exists():
-        with open(api_path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                record = json.loads(line)
-                decl = record.get("api_declaration", "")
-                if decl:
-                    api_decls.add(_normalize_decl(decl))
-                mod = record.get("module_name", "")
-                if mod:
-                    modules.add(mod)
-
-    total_api_count = len(api_decls)
-    stats["total_api_count"] = total_api_count
-    stats["module_count"] = len(modules)
-
-    # --- impl_api.jsonl ---
+    # --- impl_api.jsonl (总 API 数以 impl 为准) ---
     impl_path = output_dir / "impl_api.jsonl"
     impl_repos: set = set()
-    impl_seen_decls: set = set()
+    impl_seen_keys: set = set()
+    modules: set = set()
     napi_count = 0
     impl_name_count = 0
     fwk_decl_count = 0
@@ -192,10 +170,15 @@ def compute_kit_stats(output_dir: Path, kit_name: str) -> Dict[str, Any]:
                 if repo:
                     impl_repos.add(repo)
 
+                mod = record.get("module_name", "")
+                if mod:
+                    modules.add(mod)
+
                 decl = _normalize_decl(record.get("api_declaration", ""))
-                if not decl or decl in impl_seen_decls:
+                api_key = (decl, mod)
+                if not decl or api_key in impl_seen_keys:
                     continue
-                impl_seen_decls.add(decl)
+                impl_seen_keys.add(api_key)
 
                 if record.get("NAPI_map_file", ""):
                     napi_count += 1
@@ -206,6 +189,9 @@ def compute_kit_stats(output_dir: Path, kit_name: str) -> Dict[str, Any]:
                 if record.get("impl_file_path", ""):
                     impl_file_count += 1
 
+    total_api_count = len(impl_seen_keys)
+    stats["total_api_count"] = total_api_count
+    stats["module_count"] = len(modules)
     stats["repo_count"] = len(impl_repos)
 
     def _coverage(numerator: int, denominator: int) -> str:
@@ -218,11 +204,17 @@ def compute_kit_stats(output_dir: Path, kit_name: str) -> Dict[str, Any]:
     stats["fwk_decl_coverage"] = _coverage(fwk_decl_count, total_api_count)
     stats["impl_file_coverage"] = _coverage(impl_file_count, total_api_count)
 
-    # --- 参与审计的 API 数 ---
-    batch_input_dir = output_dir / "batch_result" / "input"
-    audited_decls: set = set()
+    # --- 参与审计的 API 数（仅统计有结果产出的 batch） ---
+    batch_result_dir = output_dir / "batch_result"
+    batch_input_dir = batch_result_dir / "input"
+    audited_keys: set = set()
     if batch_input_dir.exists():
         for batch_file in sorted(batch_input_dir.glob("batch_*.jsonl")):
+            # 提取 batch 编号，如 batch_0.jsonl -> 0
+            batch_idx = batch_file.stem.split("_", 1)[-1]
+            result_file = batch_result_dir / f"batch_{batch_idx}" / "api_scan" / RESULT_FILENAME
+            if not result_file.exists():
+                continue
             with open(batch_file, "r", encoding="utf-8") as f:
                 for line in f:
                     line = line.strip()
@@ -230,15 +222,19 @@ def compute_kit_stats(output_dir: Path, kit_name: str) -> Dict[str, Any]:
                         continue
                     record = json.loads(line)
                     decl = record.get("api_declaration", "")
+                    mod = record.get("module_name", "")
                     if decl:
-                        audited_decls.add(_normalize_decl(decl))
-        stats["audited_api_count"] = len(audited_decls)
+                        audited_keys.add((_normalize_decl(decl), mod))
+        if audited_keys:
+            stats["audited_api_count"] = len(audited_keys)
+        else:
+            stats["audited_api_count"] = None
     else:
         stats["audited_api_count"] = None
 
     # --- 存在问题的 API 数 ---
     findings_path = output_dir / "batch_result" / "merged_api_scan_findings.jsonl"
-    problem_decls: set = set()
+    problem_keys: set = set()
     if findings_path.exists():
         with open(findings_path, "r", encoding="utf-8") as f:
             for line in f:
@@ -247,9 +243,10 @@ def compute_kit_stats(output_dir: Path, kit_name: str) -> Dict[str, Any]:
                     continue
                 record = json.loads(line)
                 decl = record.get("api声明", "")
+                mod = record.get("module_name", "")
                 if decl:
-                    problem_decls.add(_normalize_decl(decl))
-        stats["problem_api_count"] = len(problem_decls)
+                    problem_keys.add((_normalize_decl(decl), mod))
+        stats["problem_api_count"] = len(problem_keys)
     else:
         stats["problem_api_count"] = None
 

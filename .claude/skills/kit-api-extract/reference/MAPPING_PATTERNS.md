@@ -5,6 +5,24 @@
 
 ---
 
+发现新模式时，按以下格式在下方添加：
+
+```markdown
+    ### 模式N：{模式名称}
+
+    **描述**：{简要描述映射机制}
+
+    **正则表达式**：{可用于 grep/搜索的正则}
+
+    **代码结构**：
+    ```cpp
+    {示例代码}
+    ```
+    **关键文件位置**：{通常出现的目录路径模式}
+```
+
+---
+
 ### 模式1：DECLARE_NAPI_FUNCTION 宏注册
 
 **描述**：最传统的 NAPI 函数注册方式，通过宏将 JS 方法名映射到 C++ 函数。通常出现在 `napi_property_descriptor` 数组中。
@@ -348,21 +366,106 @@ class Font {
 **关键文件位置**：`window_window_manager/interfaces/kits/ani/`
 
 
----
 
-发现新模式时，按以下格式追加：
+### 模式17：自定义模板方法注册 (Method<>/GetProperty<>/GetSetProperty<>)
 
-```markdown
-### 模式N：{模式名称}
+**描述**：ArkGraphics3D 不使用标准 DECLARE_NAPI_FUNCTION 宏，而是通过自定义模板函数指针将 JS 方法名映射到 C++ 类成员函数。每个模板接收 NAPI 上下文类型、类名和成员函数指针，在 napi_define_class 的属性描述符数组中注册。
 
-**描述**：{简要描述映射机制}
-
-**正则表达式**：{可用于 grep/搜索的正则}
+**正则表达式**：`Method<.*,\s*(\w+),\s*&\w+::(\w+)>|GetProperty<.*,\s*(\w+),\s*&\w+::(\w+)>|GetSetProperty<.*,\s*(\w+)`
 
 **代码结构**：
 ```cpp
-{示例代码}
+napi_property_descriptor descs[] = {
+    Method<NapiApi::FunctionContext<>, SceneJS, &SceneJS::GetNodeByPath>("getNodeByPath"),
+    GetProperty<NapiApi::Array, SceneJS, &SceneJS::GetAnimations>("animations"),
+    GetSetProperty<NapiApi::Object, SceneJS, &SceneJS::GetEnvironment, &SceneJS::SetEnvironment>("environment"),
+};
+napi_define_class(env, "Scene", NAPI_AUTO_LENGTH, SceneJS::Constructor, ...);
 ```
 
-**关键文件位置**：{通常出现的目录路径模式}
+**关键文件位置**：`graphic_graphic_3d/kits/js/src/` 下各 `*JS.cpp` 文件，模板定义在 `kits/js/include/` 下的辅助头文件中
+
+---
+
+### 模式18：napi_default_jsproperty + FromJs() 数据持有者模式
+
+**描述**：几何定义类(CustomGeometry, CubeGeometry 等)的 getter/setter 属性全部声明为 `napi_default_jsproperty`，C++ 层不拦截属性访问。数据在 JS 引擎中存储，仅在 createGeometry 调用时通过 `FromJs()` 静态方法一次性读取和验证。这是一种"延迟消费"模式。
+
+**正则表达式**：`napi_default_jsproperty.*\n.*napi_default_jsproperty` 或 `FromJs\s*\(.*napi_env.*napi_value`
+
+**代码结构**：
+```cpp
+napi_property_descriptor desc[] = {
+    {"vertices", nullptr, nullptr, nullptr, nullptr, nullptr, napi_default_jsproperty, nullptr},
+    {"indices", nullptr, nullptr, nullptr, nullptr, nullptr, napi_default_jsproperty, nullptr},
+};
+napi_define_class(env, "CustomGeometry", NAPI_AUTO_LENGTH, defaultCtor, ...);
+
+static std::unique_ptr<Geometry> FromJs(napi_env env, napi_value obj) {
+    auto vertices = GetArrayProperty<Vec3>(env, obj, "vertices");
+    auto indices = GetArrayProperty<int>(env, obj, "indices");
+}
 ```
+
+**关键文件位置**：`graphic_graphic_3d/kits/js/src/geometry_definition/` 下各文件
+
+---
+
+### 模式19：MakeTROMethod / DeclareMethod 多态注册模式
+
+**描述**：ArkGraphics3D 中根据类的继承层级使用不同的方法注册辅助宏：
+- `MakeTROMethod` — 用于继承自 TrueRootObject 的类(NodeImpl, SceneResourceImpl)
+- `DeclareMethod/DeclareGetSet` — 用于继承自 BaseObject 的类(AnimationJS, ShaderJS, EffectJS)
+- `ECMethod` — 用于非 BaseObject 的 Container 类(NodeContainerJS, EffectsContainerJS)
+
+**正则表达式**：`MakeTROMethod\s*\(|DeclareMethod\s*\(|ECMethod\s*\(`
+
+**代码结构**：
+```cpp
+// MakeTROMethod — TrueRootObject 子类
+napi_property_descriptor nodeDescs[] = {
+    MakeTROMethod(NodeImpl, GetNodeByPath),
+};
+
+// DeclareMethod — BaseObject 子类
+static DeclareMethod<AnimationJS>(env, proto, "start", &AnimationJS::Start);
+
+// ECMethod — Container 类
+ECMethod("append", NodeContainerJS::Append),
+```
+
+**关键文件位置**：`graphic_graphic_3d/kits/js/src/` 下各 `*JS.cpp` 文件
+
+### 模式20：JSI 静态方法绑定（ArkUI 早期组件绑定）
+
+**描述**：Web 等早期 ArkUI 组件不使用 `arkts_native_*_bridge.cpp`（模式14），而是通过 `JSWeb::JSBind()` + `JSClass<JSWeb>::StaticMethod()` / `CustomMethod()` 进行 JSI 绑定。这是 ArkUI 框架中较早期的组件属性/事件注册方式。每个组件有对应的 `js_*.cpp` 文件，通过 `JSBind` 静态方法注册所有属性和事件。
+
+**正则表达式**：`JSClass<JS\w+>::(StaticMethod|CustomMethod)\s*\(` 或 `JS\w+::JSBind\s*\(`
+
+**代码结构**：
+```cpp
+// js_web.cpp — Web 组件绑定
+void JSWeb::JSBind(Bridge& bridge)
+{
+    JSClass<JSWeb>::StaticMethod("webviewController", &JSWeb::CreateWebviewController);
+    JSClass<JSWeb>::StaticMethod("onSslErrorEventReceive", &JSWeb::JsOnSslErrorEventReceive);
+    JSClass<JSWeb>::CustomMethod("javaScriptProxy", &JSWeb::JsJavaScriptProxy);
+    ...
+}
+
+// js_web_controller.cpp — WebController 绑定
+void JSWebController::JSBind()
+{
+    JSClass<JSWebController>::StaticMethod("runJavaScript", &JSWebController::RunJavaScript);
+    ...
+}
+```
+
+**映射链路**：
+```
+.d.ts/ets 声明 → js_*.cpp (JSI 绑定，JSClass::StaticMethod/CustomMethod)
+              → *_model.h / *_model_ng.h (Framework 声明)
+              → frameworks/core/components_ng/pattern/*/ (业务逻辑)
+```
+
+**关键文件位置**：`arkui_ace_engine/frameworks/bridge/declarative_frontend/jsview/js_web.cpp`

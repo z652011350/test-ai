@@ -1,12 +1,19 @@
 """
-batch_scan_all.py - 批量遍历所有 Kit 调用 scan_kit.py
+batch_scan_all.py - 批量遍历所有 Kit 调用 scan_kit.py（并行版）
 
-从 kit_compont.csv 中提取去重的 Kit 名称，依次生成并执行 scan_kit.py 命令。
-python3 /Users/spongbob/for_guance/api_dfx_2.0/scripts/kit-scan/batch_scan_all.py -kits "Ability" -doc_path /Users/spongbob/for_guance/api_dfx_2.0/data/docs -skip_extract
+从 kit_compont.csv 中提取去重的 Kit 名称，并行生成并执行 scan_kit.py 命令。
+每个进程启动时带随机延迟（1.0-10.0s），最多同时运行 max_parallel 个进程。
+
+用法:
+  python3 batch_scan_all.py -kits "Ability" -doc_path /path/to/docs -skip_extract
+  python3 batch_scan_all.py -kits "Ability" "BasicServicesKit" -max_parallel 2
 """
 
+import random
 import subprocess
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import batch_pipeline
@@ -57,9 +64,31 @@ def build_command(kit_name: str, skip_extract: bool = False, doc_path: str = "",
     return cmd
 
 
+def run_kit_worker(kit_name: str, cmd: list[str], index: int, total: int) -> tuple[str, int]:
+    """Worker 函数：随机延迟后执行单个 Kit 的 scan_kit.py 命令。
+
+    Args:
+        kit_name: Kit 名称
+        cmd: scan_kit.py 命令及参数
+        index: 当前 Kit 序号（从 1 开始）
+        total: 总 Kit 数
+
+    Returns:
+        (kit_name, returncode) 元组
+    """
+    delay = random.uniform(1.0, 10.0)
+    print(f"[{index}/{total}] {kit_name} 延迟 {delay:.1f}s 后启动...")
+    time.sleep(delay)
+
+    print(f"[{index}/{total}] 启动: {kit_name}")
+    print(f"  命令: {' '.join(cmd)}")
+    result = subprocess.run(cmd)
+    return (kit_name, result.returncode)
+
+
 def parse_args():
     import argparse
-    parser = argparse.ArgumentParser(description="批量遍历所有 Kit 调用 scan_kit.py")
+    parser = argparse.ArgumentParser(description="批量遍历所有 Kit 调用 scan_kit.py（并行版）")
     parser.add_argument("-n", "--dry-run", action="store_true", help="仅打印命令，不执行")
     parser.add_argument(
         "-kits",
@@ -75,6 +104,12 @@ def parse_args():
         "-doc_path",
         default=str(DOC_PATH),
         help=f"API 错误码文档目录路径 (默认: {DOC_PATH})",
+    )
+    parser.add_argument(
+        "-max_parallel",
+        type=int,
+        default=_config.get("max_parallel", 3),
+        help=f"最大并行进程数 (默认: {_config.get('max_parallel', 3)})",
     )
     return parser.parse_args()
 
@@ -113,25 +148,55 @@ def main():
         kits = all_kits
         print(f"共发现 {len(kits)} 个 Kit\n")
 
+    # 构建所有 Kit 的命令
+    kit_commands = []
     for i, kit in enumerate(kits, 1):
         cmd = build_command(kit, args.skip_extract, args.doc_path, C_DECL_PATH)
-        cmd_str = " ".join(cmd)
-
-        if args.dry_run:
-            print(f"[{i}/{len(kits)}] {cmd_str}")
-        else:
-            print(f"\n{'=' * 60}")
-            print(f"[{i}/{len(kits)}] 正在处理: {kit}")
-            print(f"命令: {cmd_str}")
-            print("=" * 60)
-
-            result = subprocess.run(cmd)
-            if result.returncode != 0:
-                print(f"[警告] Kit '{kit}' 处理失败 (退出码: {result.returncode})，继续下一个")
+        kit_commands.append((kit, cmd))
 
     if args.dry_run:
-        print(f"\n--dry-run 模式，共 {len(kits)} 条命令，未实际执行")
+        # dry-run 模式：顺序打印命令，不执行
+        for i, (kit, cmd) in enumerate(kit_commands, 1):
+            cmd_str = " ".join(cmd)
+            print(f"[{i}/{len(kit_commands)}] {cmd_str}")
+        print(f"\n--dry-run 模式，共 {len(kit_commands)} 条命令，未实际执行")
     else:
+        # 并行执行模式
+        max_parallel = args.max_parallel
+        total = len(kit_commands)
+        print(f"\n并行执行: 共 {total} 个 Kit, 最大并发数: {max_parallel}")
+        print("=" * 60)
+
+        results: list[tuple[str, int]] = []
+        with ThreadPoolExecutor(max_workers=max_parallel) as pool:
+            future_to_kit = {}
+            for i, (kit, cmd) in enumerate(kit_commands, 1):
+                future = pool.submit(run_kit_worker, kit, cmd, i, total)
+                future_to_kit[future] = kit
+
+            for future in as_completed(future_to_kit):
+                kit = future_to_kit[future]
+                try:
+                    kit_name, returncode = future.result()
+                    results.append((kit_name, returncode))
+                    if returncode != 0:
+                        print(f"[警告] Kit '{kit_name}' 处理失败 (退出码: {returncode})")
+                    else:
+                        print(f"[完成] Kit '{kit_name}' 处理成功")
+                except Exception as exc:
+                    print(f"[错误] Kit '{kit}' 执行异常: {exc}")
+                    results.append((kit, -1))
+
+        # 打印执行结果汇总
+        failed = [(name, rc) for name, rc in results if rc != 0]
+        print(f"\n{'=' * 60}")
+        print(f"执行完毕: {total} 个 Kit, 成功 {total - len(failed)} 个, 失败 {len(failed)} 个")
+        if failed:
+            for name, rc in failed:
+                print(f"  失败: {name} (退出码: {rc})")
+        print("=" * 60)
+
+        # 汇总报表生成
         # 汇总所有 Kit 的统计数据
         print("\n" + "=" * 60)
         print("生成全量汇总报表")
