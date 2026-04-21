@@ -634,3 +634,229 @@ napi_value ScanFile(napi_env env, napi_callback_info info) {
 - 可能有 `#ifdef` 条件编译包裹
 
 **关键文件位置**：`interfaces/kits/*/napi/src/` 下使用 dlopen 的 NAPI 文件
+
+---
+
+### 模式28：纯 ABC 字节码模块（ArkUI 组件 ABC 加载）
+
+**描述**：部分 ArkUI 组件（如 PhotoPickerComponent、AlbumPickerComponent）作为纯 ABC（ArkUI Bytecode）模块实现。C++ 入口文件仅注册 nm_modname 并通过 NAPI 框架加载嵌入的 .abc 字节码文件。实际的业务逻辑完全在 .ets/.js 源文件中实现，不经过 C++ NAPI 层。
+
+**正则表达式**：`\.nm_modname\s*=\s*"file\.(Photo|Album)Picker"` 或 `requireInternalFile`
+
+**代码结构**：
+```cpp
+// photopickercomponent.cpp — ABC 加载器入口
+static napi_value Import(napi_env env, napi_value exports) {
+    // 仅加载嵌入的 ABC 字节码，无 C++ 业务逻辑
+}
+
+// photopickercomponent.js — 编译后的 JS facade
+class PickerController {
+    setData(dataType, data) { ... }
+    addData(dataType, data) { ... }
+}
+```
+
+**映射链路**：
+```
+.d.ets 声明 → photopickercomponent.cpp (ABC 加载器，nm_modname)
+           → photopickercomponent.js (编译后的 JS facade)
+           → PhotoPickerComponent.ets (原始 ETS 源码)
+```
+
+**识别特征**：
+- NAPI 入口文件非常简短（< 100 行），只有 Import 函数
+- 存在同名的 .js 或 .abc 文件
+- 无 DECLARE_NAPI_FUNCTION 或 napi_define_class 调用
+- 组件类方法在 JS/ETS 层实现
+
+**关键文件位置**：`multimedia_media_library/frameworks/js/src/photopickercomponent.cpp`、`albumpickercomponent.cpp`
+
+---
+
+### 模式29：napi_define_sendable_class 可发送类注册
+
+**描述**：sendable 模块（如 @ohos.file.sendablePhotoAccessHelper）使用 `napi_define_sendable_class` 注册可发送类（Sendable Class）。这是 HarmonyOS 对标准 napi_define_class 的扩展，用于跨线程安全传递的类对象。每个可发送类有独立的 NAPI 实现文件。
+
+**正则表达式**：`napi_define_sendable_class\s*\(`
+
+**代码结构**：
+```cpp
+// native_module_ohos_photoaccess_helper_sendable.cpp — 模块入口
+napi_value Export(napi_env env, napi_value exports) {
+    SendablePhotoAccessHelper::Init(env, exports);
+    SendableFileAssetNapi::Init(env, exports);
+    SendableFetchFileResultNapi::Init(env, exports);
+    SendablePhotoAlbumNapi::Init(env, exports);
+}
+
+// sendable_photo_access_helper_napi.cpp — 类注册
+napi_value Init(napi_env env, napi_value exports) {
+    napi_property_descriptor properties[] = {
+        DECLARE_NAPI_FUNCTION("getAssets", GetAssets),
+        DECLARE_NAPI_FUNCTION("createAsset", CreateAsset),
+    };
+    napi_define_sendable_class(env, "PhotoAccessHelper", ...);
+}
+```
+
+**映射链路**：
+```
+.d.ets 声明 → native_module_ohos_photoaccess_helper_sendable.cpp (模块入口)
+           → sendable_*_napi.cpp (可发送类实现)
+           → UserFileClient (DataShare IPC 业务逻辑)
+```
+
+**识别特征**：
+- 模块名包含 "sendable" 关键字
+- 使用 `napi_define_sendable_class` 而非 `napi_define_class`
+- 类名通常以 "Sendable" 前缀开头
+- 业务逻辑委托给 UserFileClient/DataShare IPC 层
+
+**关键文件位置**：`multimedia_media_library/frameworks/js/src/sendable/`
+
+---
+
+### 模式30：napi_define_properties 视图属性 + napi_define_class 控制器双重注册
+
+**描述**：MovingPhotoView 等组件使用双重注册模式：视图属性通过 `napi_define_properties` 注册到模块 exports，控制器通过 `napi_define_class` 注册为可导出类。两个模块（static 和 dynamic）共享同一 C++ 后端。组件位于 arkui_ace_engine 仓而非功能仓。
+
+**正则表达式**：`napi_define_properties\s*\(.*movingphoto` 或 `JsCreate|JsMuted|JsAutoPlay`
+
+**代码结构**：
+```cpp
+// movingphoto_napi.cpp — NAPI 入口
+napi_property_descriptor viewDescs[] = {
+    DECLARE_NAPI_FUNCTION("create", JsCreate),
+    DECLARE_NAPI_FUNCTION("muted", JsMuted),
+    DECLARE_NAPI_FUNCTION("autoPlay", JsAutoPlay),
+};
+napi_define_properties(env, exports, ...);
+
+// MovingPhotoViewController 注册
+napi_define_class(env, "MovingPhotoViewController", NAPI_AUTO_LENGTH, Constructor, ...);
+```
+
+**映射链路**：
+```
+.d.ts 声明 → movingphoto_napi.cpp (NAPI 属性+类注册)
+           → MovingPhotoModelNG (ArkUI 组件模型)
+           → frameworks/core/components_ng/ (业务逻辑)
+```
+
+**识别特征**：
+- 两个模块（如 MovingPhotoView.static 和 movingphotoview）映射到同一 C++ 模块
+- 组件在 arkui_ace_engine 仓而非功能仓
+- 视图属性和控制器分别用不同的 NAPI 注册方式
+
+**关键文件位置**：`arkui_ace_engine/component_ext/movingphoto/`
+
+---
+
+### 模式31：NAPI + Taihe/ANI 双轨绑定 (dynamic/static 分离)
+
+**描述**：同一模块的 API 分为 dynamic 和 static 两套并行实现。Dynamic API 使用传统 NAPI 注册（DECLARE_NAPI_FUNCTION / DECLARE_NAPI_STATIC_FUNCTION），Static API 使用 Taihe IDL + ANI 运行时（TH_EXPORT_CPP_API_xxx 宏）。两套实现共享相同的底层业务逻辑（如 MotionClient, BoomerangManager -> IntentionManager -> IPC Client）。常见于 MultimodalAwarenessKit。
+
+**正则表达式**：`TH_EXPORT_CPP_API_\w+.*Inner` 或 `@since\s+\d+\s+static` (JSDoc 标记)
+
+**代码结构**：
+```cpp
+// NAPI 层 (dynamic 模式) — frameworks/js/napi/<module>/src/*_napi.cpp
+napi_property_descriptor desc[] = {
+    DECLARE_NAPI_STATIC_FUNCTION("on", SubscribeMotion),
+    DECLARE_NAPI_STATIC_FUNCTION("off", UnSubscribeMotion),
+};
+napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);
+
+// Taihe IDL 层 (static 模式) — frameworks/ets/<module>/idl/*.taihe
+// ohos.multimodalAwareness.motion.taihe
+interface Motion {
+    void onOperatingHandChanged(Callback<OperatingHandStatus> callback);
+    void offOperatingHandChanged(Callback<OperatingHandStatus>? callback);
+}
+
+// Taihe 实现 — frameworks/ets/<module>/src/*.impl.cpp
+TH_EXPORT_CPP_API_OnOperatingHandChangedInner(params) {
+    AniMotionEvent::AddCallback(OPERATING_HAND_TYPE);
+}
+```
+
+**JS API 到 C++ 的映射**：
+- dynamic: `on("operatingHandChanged", cb)` → NAPI `SubscribeMotion` → `MotionClient::SubscribeCallback`
+- static: `onOperatingHandChanged(cb)` → Taihe `OnOperatingHandChangedInner` → `AniMotionEvent::AddCallback` → `MotionClient::SubscribeCallback`
+
+**识别特征**：
+- JSDoc 中有 `@since N dynamic` 和 `@since N static` 标记
+- NAPI 入口在 `frameworks/js/napi/` 下，Taihe 入口在 `frameworks/ets/` 下
+- Static API 的 JS 方法名通过 `sts_inject` 注入桥接到 `*Inner` C++ 函数
+- `@gen_promise` 注解自动生成 Promise 包装
+
+**映射链路**：
+```
+.d.ts 声明 (dynamic/static 标记)
+  ├── dynamic: → frameworks/js/napi/<module>/*_napi.cpp (NAPI 注册)
+  │            → frameworks/native/src/*_manager.cpp (Facade)
+  │            → intention/*/client/src/*_client.cpp (IPC Client)
+  └── static:  → frameworks/ets/<module>/idl/*.taihe (Taihe IDL)
+               → frameworks/ets/<module>/src/*.impl.cpp (Taihe 实现)
+               → frameworks/ets/<module>/src/ani_*_manager.cpp (ANI Manager)
+               → 同上底层业务逻辑
+```
+
+**关键文件位置**：
+- NAPI: `msdp_device_status/frameworks/js/napi/<module>/src/`
+- Taihe IDL: `msdp_device_status/frameworks/ets/<module>/idl/*.taihe`
+- Taihe 实现: `msdp_device_status/frameworks/ets/<module>/src/*.impl.cpp`
+- ANI Manager: `msdp_device_status/frameworks/ets/<module>/src/ani_*_manager.cpp`
+
+---
+
+### 模式32：NExporter 类继承体系（NVal::DeclareNapiFunction）
+
+**描述**：hilog 等模块使用 `NExporter` 类继承体系进行 NAPI 绑定，不同于标准的 DECLARE_NAPI_FUNCTION 宏。子类继承 `NExporter`，在 `Export()` 静态方法中通过 `NVal::DeclareNapiFunction()` 注册函数，模块入口使用 `NAPI_MODULE(name, Export)`。
+
+**正则表达式**：`NExporter|NVal::DeclareNapiFunction|NAPI_MODULE\s*\(`
+
+**代码结构**：
+```cpp
+// hilog_napi.cpp
+class HilogNapi : public NExporter {
+public:
+    static napi_value Export(napi_env env, napi_value exports) {
+        NVal::DeclareNapiFunction(env, exports, {"debug", HilogNapiBase::Debug});
+        NVal::DeclareNapiFunction(env, exports, {"info", HilogNapiBase::Info});
+    }
+};
+
+// module.cpp
+NAPI_MODULE(hilog, HilogNapi::Export)
+```
+
+**关键文件位置**：`hiviewdfx_hilog/interfaces/js/kits/napi/src/hilog/src/`
+
+---
+
+### 模式33：双 nm_modname 前后端分离（JS facade + Native backend）
+
+**描述**：部分模块（如 jsLeakWatcher）注册两个独立的 nm_modname：一个用于 ABC/TS 字节码加载器（JS 门面），另一个用于 C++ NAPI 后端（底层功能）。JS 门面通过 `requireNapi()` 调用 C++ 后端。
+
+**正则表达式**：`requireNapi\s*\(\s*['"][^']*[Nn]ative['"]` 或双 nm_modname 注册
+
+**代码结构**：
+```javascript
+// js_leak_watcher.ts — JS 门面
+const native = requireNapi('hiviewdfx.jsleakwatchernative');
+export function enable(isEnable) { /* JS 逻辑 */ }
+export function dump(filePath) { return native.dumpRawHeap(filePath); }
+```
+
+```cpp
+// js_leak_watcher_module.cpp — ABC 加载器
+.nm_modname = "hiviewdfx.jsLeakWatcher"
+
+// js_leak_watcher_napi.cpp — C++ 后端
+.nm_modname = "jsLeakWatcherNative"
+BindNativeFunction(env, exports, "dumpRawHeap", DumpRawHeap);
+```
+
+**关键文件位置**：`hiviewdfx_hichecker/interfaces/js/kits/napi/js_leak_watcher/`
