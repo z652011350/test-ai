@@ -860,3 +860,167 @@ BindNativeFunction(env, exports, "dumpRawHeap", DumpRawHeap);
 ```
 
 **关键文件位置**：`hiviewdfx_hichecker/interfaces/js/kits/napi/js_leak_watcher/`
+
+---
+
+### 模式34：GenericCallback + IPC Handler 分发（数据驱动通用回调）
+
+**描述**：所有 JS API 共用一个 `GenericCallback` 函数作为 NAPI 入口，通过 `FrontendMethodDef` 结构体区分不同 API。参数序列化为 JSON 后通过 IPC（`ApiTransactor`）发送到后端服务进程，由 `FrontendApiServer` 的 handler 映射表分发到具体处理函数。常见于测试框架（testfwk_arkxtest）。
+
+**正则表达式**：`FrontendMethodDef|GenericCallback|FrontendApiServer`
+
+**代码结构**：
+```cpp
+// API 定义表
+static const std::vector<FrontendMethodDef> METHOD_DEFS = {{
+    { "Driver.click", "xx,y", false, true, false, false },
+    { "PerfTest.create", "s", true, false, false, false },
+}};
+
+// 通用 NAPI 回调
+napi_value GenericCallback(napi_env env, napi_callback_info info) {
+    // 序列化参数 -> ApiTransactor IPC -> 后端处理
+}
+
+// 后端 Handler 注册
+void RegisterApiHandlers() {
+    handler_["Driver.click"] = [](json& params) { UiDriver::PerformTouch(...); };
+}
+```
+
+**映射链路**：
+```
+.d.ts 声明 -> uitest_napi.cpp (GenericCallback, 数据驱动注册)
+           -> ApiTransactor IPC -> FrontendApiServer handler 分发
+           -> ui_driver.cpp / perf_test.cpp (业务逻辑)
+```
+
+**JS API 到 C++ 的映射**：
+- `Driver.click(x, y)` -> `GenericCallback("Driver.click")` -> IPC -> handler -> `UiDriver::PerformTouch`
+- 旧 API 自动映射：`By.id` -> `old2NewApiMap_` -> `On.accessibilityId`
+
+**识别特征**：
+- 所有 API 共用同一个 `GenericCallback` 回调函数
+- `FrontendMethodDef` 结构体定义 API 名称、参数签名、static/fast 等属性
+- IPC 通信到独立服务进程
+- 后端通过 handler 映射表分发
+
+**关键文件位置**：`testfwk_arkxtest/uitest/napi/uitest_napi.cpp`、`testfwk_arkxtest/perftest/napi/src/perftest_napi.cpp`
+
+---
+
+### 模式35：ExtensionAbility CallObjectMethod（反向调用：C++ → JS 回调）
+
+**描述**：CryptoExtensionAbility 等扩展能力模块的 API（如 onOpenResource、onAuthUkeyPin）是 ExtensionAbility 生命周期回调方法。调用方向与标准 NAPI 相反：不是 JS 调用到 C++，而是 C++ 服务端通过 napi_get_named_property + napi_call_function 反射调用到 JS Extension 实例的方法。
+
+**正则表达式**：`CallJsMethod\s*\(\s*"on\w+"` 或 `OHOS_EXTENSION_GetExtensionModule`
+
+**代码结构**：
+```cpp
+// crypto_ext_module.cpp — 模块注册（非标准 napi_module）
+NAPI_security_CryptoExtensionAbility_AutoRegister() {
+    // 注册 security.CryptoExtensionAbility，加载嵌入的 JS/ABC 字节码
+}
+
+// hks_ext_module_loader.cpp — Extension 入口
+extern "C" void* OHOS_EXTENSION_GetExtensionModule() {
+    return HksCryptoExtAbility::Create(runtime);
+    // 当 runtime 为 JS 时，创建 JsHksCryptoExtAbility
+}
+
+// js_hks_crypto_ext_ability.cpp — C++ 到 JS 桥接
+int32_t JsHksCryptoExtAbility::OpenRemoteHandle(...) {
+    return CallJsMethod("onOpenResource", ...);
+}
+
+int32_t CallJsMethod(const std::string& methodName, ...) {
+    napi_get_named_property(env, jsObj, methodName.c_str(), &method);
+    napi_call_function(env, jsObj, method, argc, argv, &result);
+    // 处理 Promise 结果：napi_is_promise -> then -> 条件变量同步等待
+}
+```
+
+**映射链路**：
+```
+.d.ts 声明 (onXxx 方法)
+  → crypto_ext_module.cpp (模块注册，加载 JS/ABC)
+  → crypto_extension_ability.js (JS 基类存根，开发者覆写)
+  → hks_ext_module_loader.cpp (OHOS_EXTENSION_GetExtensionModule)
+  → js_hks_crypto_ext_ability.cpp (C++ → JS 桥接，CallJsMethod)
+  → hks_crypto_ext_stub_impl.cpp (IPC Stub，委托到 Extension 实例)
+```
+
+**JS API 到 C++ 的映射**：
+- onOpenResource(...) → JsHksCryptoExtAbility::OpenRemoteHandle → CallJsMethod("onOpenResource")
+- onAuthUkeyPin(...) → JsHksCryptoExtAbility::AuthUkeyPin → CallJsMethod("onAuthUkeyPin")
+
+**识别特征**：
+- API 方法名以 on 开头，属于 ExtensionAbility 回调
+- component_map.json 中没有 nm_modname 映射
+- 使用 OHOS_EXTENSION_GetExtensionModule() 而非标准 napi_module
+- C++ 侧使用 napi_get_named_property + napi_call_function 反射调用 JS 方法
+- 支持通过 napi_is_promise 处理异步 Promise 返回值
+
+**关键文件位置**：security_huks/interfaces/js/crypto_extension_module/（模块注册）、security_huks/services/huks_standard/huks_service/extension/ability_native/（实现）
+
+---
+
+### 模式36：VM-Builtin Bridge（NAPI 薄桥接 → VM 内建类）
+
+**描述**：@arkts.collections 等模块使用极薄的 NAPI 桥接层，从全局作用域获取预注册的 VM 内建类并重新导出。NAPI 层不包含任何业务逻辑，实际实现在 arkcompiler_ets_runtime 的 builtins 中作为静态 C++ 函数注册。
+
+**正则表达式**：`RegisterSendableContainers|InitArkTSCollections|BUILTIN_SHARED_\w+_PROTOTYPE_FUNCTIONS`
+
+**代码结构**：
+```cpp
+// native_module_collections.cpp — NAPI 薄桥接
+napi_value Init(napi_env env, napi_value exports) {
+    napi_value sendableArray = GetGlobalBuiltin(env, "SendableArray");
+    napi_set_named_property(env, exports, "Array", sendableArray);
+}
+// builtins.cpp — VM 启动时注册
+void Builtins::RegisterSendableContainers() { /* 注册全局内建类 */ }
+// builtins_shared_array.cpp — 实际 VM 内建实现
+BUILTIN_SHARED_ARRAY_PROTOTYPE_FUNCTIONS(...) { /* push, pop, splice... */ }
+```
+
+**关键文件位置**：
+- NAPI 桥接: `commonlibrary_ets_utils/js_util_module/collections/native_module_collections.cpp`
+- VM 内建: `arkcompiler_ets_runtime/ecmascript/builtins/builtins_shared_*.cpp`
+
+---
+
+### 模式37：ArkPrivate.Load 高性能内建（容器/Buffer 快速路径）
+
+**描述**：FastBuffer、容器类高性能变体通过 ArkPrivate.Load() 加载，绕过 NAPI 直接使用 VM 内建。JS 门面通过 globalThis.ArkPrivate.Load() 获取原生对象，NAPI 模块 Init 为空。
+
+**正则表达式**：`ArkPrivate\.Load\s*\(|CONTAINER_FASTBUFFER_PROTOTYPE_FUNCTIONS`
+
+**代码结构**：
+```javascript
+const FastBufferInner = globalThis.ArkPrivate.Load(ArkPrivate.FastBuffer);
+class FastBuffer extends FastBufferInner { /* 覆盖部分方法 */ }
+```
+
+**关键文件位置**：
+- `commonlibrary_ets_utils/js_api_module/fastbuffer/` + `arkcompiler_ets_runtime/ecmascript/containers/containers_buffer.cpp`
+
+---
+
+### 模式38：napi_module_with_js 混合 NAPI + 嵌入式 JS/ABC
+
+**描述**：url、uri、xml 等模块使用 napi_module_with_js，同时嵌入 JS/ABC 字节码。C++ NAPI 层注册核心类，嵌入 JS/ABC 为 static API 变体提供包装。
+
+**正则表达式**：`napi_module_with_js|nm_get_js_code|nm_get_abc_code`
+
+**关键文件位置**：`commonlibrary_ets_utils/js_api_module/{url,uri,xml}/`
+
+---
+
+### 模式39：纯 ETS 反射模块（无 NAPI/C++ 层）
+
+**描述**：@ohos.transfer 等模块完全在 ETS 层实现，使用反射机制进行类型转换。
+
+**正则表达式**：`Class\.ofCaller|getLinker\(\)\.loadClass`
+
+**关键文件位置**：`commonlibrary_ets_utils/base_sdk/transfer/`
